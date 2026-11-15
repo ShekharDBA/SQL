@@ -1,0 +1,87 @@
+
+******************* Common Script **************************
+SELECT *
+FROM (
+    SELECT 
+        ROW_NUMBER() OVER (
+            PARTITION BY rs.destination_database_name 
+            ORDER BY bs.backup_start_date DESC
+        ) AS row_id,
+        rs.destination_database_name,
+        rs.restore_date,
+        bs.backup_start_date,
+        bs.backup_finish_date,
+        bs.database_name AS source_database_name,
+        bmf.physical_device_name AS backup_file_used_for_restore
+    FROM msdb..restorehistory rs
+    INNER JOIN msdb..backupset bs 
+        ON rs.backup_set_id = bs.backup_set_id
+    INNER JOIN msdb..backupmediafamily bmf 
+        ON bs.media_set_id = bmf.media_set_id
+    WHERE rs.destination_database_name LIKE '%IVPS%'
+      AND rs.destination_database_name NOT LIKE '%Test%'
+) MAS
+WHERE row_id = 1
+ORDER BY destination_database_name;
+
+
+*************************** For Dev Env ******************
+
+SELECT --* , 
+'IVPMSSQLPROD.napierparkglobal.com' AS [Source Server Name],[Source Database Name],[Backup File Used For Restore],
+ 'IVPMSSQLDEV.napierparkglobal.com' AS [Destination Server Name], [Destination Database Name]
+,[Database Restore Date]
+FROM (
+    SELECT 
+        ROW_NUMBER() OVER (
+            PARTITION BY rs.destination_database_name 
+            ORDER BY bs.backup_start_date DESC
+        ) AS row_id,
+        '' AS [Source Server Name],
+        bs.database_name AS [Source Database Name],
+        REPLACE(bmf.physical_device_name,'B:\PRD_Backup\','') AS [Backup File Used For Restore],
+        rs.destination_database_name [Destination Database Name],
+        rs.restore_date [Database Restore Date]       
+    FROM msdb..restorehistory rs
+    INNER JOIN msdb..backupset bs 
+        ON rs.backup_set_id = bs.backup_set_id
+    INNER JOIN msdb..backupmediafamily bmf 
+        ON bs.media_set_id = bmf.media_set_id
+    WHERE rs.destination_database_name LIKE '%IVPPrice%'
+          AND CAST(rs.restore_date AS DATE)='2026-05-27'
+) MAS
+WHERE row_id = 1
+--ORDER BY [Destination Database Name];
+
+
+*************************** For UAT Env ******************
+
+
+SELECT --* , 
+UPPER('IVPMSSQLPROD.napierparkglobal.com') AS [Source Server Name],[Source Database Name],[Backup File Used For Restore],
+ UPPER('ivpmssqluat.napierparkglobal.com') AS [Destination Server Name], [Destination Database Name]
+,[Database Restore Date]
+
+FROM (
+    SELECT 
+        ROW_NUMBER() OVER (
+            PARTITION BY rs.destination_database_name 
+            ORDER BY bs.backup_start_date DESC
+        ) AS row_id,
+        '' AS [Source Server Name],
+        bs.database_name AS [Source Database Name],
+		REPLACE( REPLACE(bmf.physical_device_name, 'B:\Backups\Prod_Backups\', ''), 'H:\WeekendRefresh\Prod_Backups\', '' )  AS [Backup File Used For Restore]
+        , rs.destination_database_name [Destination Database Name],
+       CAST( rs.restore_date AS DATE) [Database Restore Date]    
+    FROM msdb..restorehistory rs
+    INNER JOIN msdb..backupset bs 
+        ON rs.backup_set_id = bs.backup_set_id
+    INNER JOIN msdb..backupmediafamily bmf 
+        ON bs.media_set_id = bmf.media_set_id
+    WHERE 
+	--rs.destination_database_name LIKE '%IVPPrice%'
+ --         AND 
+		  CAST(rs.restore_date AS DATE)='2026-06-01'
+) MAS
+WHERE row_id = 1
+--ORDER BY [Destination Database Name];

@@ -1,0 +1,1 @@
+Restore VerifyOnly FROM DISK ='B:\MSSQL\Nightly Backups\EDM_PRA_20260919.bak'

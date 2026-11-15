@@ -1,0 +1,66 @@
+USE IVPProdAudit
+GO
+SELECT TOP 10 *  FROM [IVPProdAudit].[dbo].[AllDbTableSize]
+WHERE CAST(Collection_time as date)=CAST(getdate() AS date)
+ORDER BY UsedSpaceMB DESC
+
+
+
+
+
+
+
+*******************************************
+
+USE IVPProdAudit
+GO
+SELECT TOP 10 *  FROM [IVPProdAudit].[dbo].[AllDbTableSize]
+WHERE CAST(Collection_time as date)=CAST(getdate() AS date)
+ORDER BY UsedSpaceMB DESC
+
+
+GO
+
+SELECT * FROM [IVPProdAudit].[dbo].[AllDbTableSize] where database name='IVPProdAudit' and collection_time like '2026%';
+
+
+GO
+
+SELECT * FROM [IVPProdAudit].[dbo].[AllDbTableSize] where database_name='IVPProdAudit' and collection_time like '%2026%';
+
+
+*********************************************************************
+
+WITH DuplicateRows AS
+(
+    SELECT ROW_NUMBER() OVER
+    (
+        PARTITION BY Database_Name, SchemaName, Table_Name, CAST(Collection_time AS DATE)
+        ORDER BY UsedSpaceMB DESC
+    ) AS RowNum
+	, Collection_time,database_name,table_name,SchemaName
+    , rows,TotalSpaceMB, UsedSpaceMB,FreeSpaceMB,DataSizeMB,IndexSizeMB,TotalSizeGB,UsedSizeGB
+    FROM [IVPProdAudit].[dbo].[AllDbTableSize]
+    WHERE CAST(Collection_time AS DATE) = CAST(GETDATE() AS DATE)
+)
+SELECT COUNT(*) AS DuplicateCount
+FROM DuplicateRows
+WHERE RowNum > 1;
+
+*************************************************************************
+
+
+WITH DuplicateRows AS
+(
+    SELECT 
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY Database_Name, SchemaName, Table_Name, CAST(Collection_time AS DATE)
+            ORDER BY UsedSpaceMB DESC
+        ) AS RowNum,
+        *
+    FROM [IVPProdAudit].[dbo].[AllDbTableSize]
+    WHERE CAST(Collection_time AS DATE) = CAST(GETDATE() AS DATE)
+)
+DELETE FROM DuplicateRows
+WHERE RowNum > 1;

@@ -1,0 +1,58 @@
+use NapierApps
+GO
+
+SELECT 
+    r.session_id,
+    r.status,
+    r.command,
+    r.blocking_session_id,
+    r.wait_type,
+    r.wait_time,
+    r.wait_resource,
+    DB_NAME(r.database_id) AS database_name,
+    t.text AS query_text
+FROM sys.dm_exec_requests r
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+WHERE r.session_id > 50;
+GO
+
+SELECT 
+    blocking_session_id AS blocker,
+    session_id AS blocked,
+    wait_type,
+    wait_time,
+    wait_resource
+FROM sys.dm_exec_requests
+WHERE blocking_session_id <> 0;
+
+
+DBCC OPENTRAN;
+
+SELECT 
+    request_session_id,
+    resource_type,
+    resource_description,
+    request_mode,
+    request_status
+FROM sys.dm_tran_locks
+WHERE resource_database_id = DB_ID('IVPPolaris')
+and resource_description  <> '';
+
+
+SELECT 
+    r.session_id,
+    r.blocking_session_id,
+    r.status,
+    r.wait_type,
+    r.wait_time,
+    r.wait_resource,
+    t.text AS running_query
+FROM sys.dm_exec_requests r
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+WHERE r.session_id > 50;
+
+
+
+SELECT OBJECT_NAME(776441890);
+
+

@@ -1,0 +1,555 @@
+
+
+
+/* ============================================================
+   Index Fragmentation Maintenance + Email Report + Killed Sessions Email
+   - Compatible with SQL Server 2005+
+   - Respects AlwaysOn AG primaries when enabled
+   - Sends HTML email for Report-Only or Execute modes
+   - Optional Killed Sessions HTML email from IVPProdAudit.dbo.KilledSessionLog
+   ============================================================ */
+
+SET NOCOUNT ON;
+
+------------------------------------------------------------
+-- Initial checks
+------------------------------------------------------------
+DECLARE @isSysAdmin INT;
+SET @isSysAdmin = (SELECT IS_SRVROLEMEMBER('sysadmin'));
+
+DECLARE @SQLServerVersion INT;
+SET @SQLServerVersion = (
+    SELECT CAST(LEFT(CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(50)),
+                     CHARINDEX('.', CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(50))) - 1) AS INT)
+);
+
+IF @isSysAdmin = 1 AND @SQLServerVersion >= 9
+BEGIN
+    ------------------------------------------------------------
+    -- Parameters (you can change)
+    ------------------------------------------------------------
+    DECLARE @reportOnly BIT           = 1;           -- 1 = report only; 0 = execute rebuilds
+    DECLARE @databaseToCheck VARCHAR(250) = NULL;    -- NULL = all databases; otherwise a specific DB name
+    DECLARE @fragmentationThreshold VARCHAR(10) = '15'; -- minimum fragmentation % to consider
+    DECLARE @indexFillFactor VARCHAR(5)  = '90';     -- fill factor for REBUILD
+    DECLARE @indexStatisticsScanningMode VARCHAR(20) = 'SAMPLED'; -- 'DEFAULT'/NULL/'LIMITED'/'SAMPLED'/'DETAILED'
+    DECLARE @sortInTempdb VARCHAR(3) = 'ON';         -- 'ON' or 'OFF' for REBUILD
+    DECLARE @verboseMode BIT = 0;                    -- 1 = verbose PRINTs
+
+    -- Optional: also REORGANIZE when between threshold and @reorgUpperBound
+    DECLARE @useReorganize BIT = 0;                  -- 1 = enable REORGANIZE in [threshold, @reorgUpperBound]
+    DECLARE @reorgUpperBound INT = 30;               -- <= this value will REORGANIZE (if @useReorganize=1); > this REBUILDs
+
+    -- Email parameters
+    DECLARE @sendEmail BIT = 1;                      -- 1 = send email; 0 = no email
+    DECLARE @emailProfile SYSNAME = N'DBA';
+    DECLARE @emailTo NVARCHAR(MAX) = N'chandra.shekhar@napierparkglobal.com';
+    DECLARE @emailCc NVARCHAR(MAX) = N'chandra.shekhar@napierparkglobal.com';
+    DECLARE @emailSubjectPrefix NVARCHAR(200) = N'Index Fragmentation Report';
+    DECLARE @ServerName NVARCHAR(128) = CONVERT(NVARCHAR(128), SERVERPROPERTY('MachineName'));
+    DECLARE @EmailSubject NVARCHAR(400) =
+        @emailSubjectPrefix + N' (' + CONVERT(VARCHAR(10), GETDATE(), 120) + N') -- ' + @ServerName;
+
+    ------------------------------------------------------------
+    -- Internal variables (do not change)
+    ------------------------------------------------------------
+    DECLARE @dbname NVARCHAR(128);
+    DECLARE @dbid INT;
+    DECLARE @isHadrEnabled BIT = 0;
+    DECLARE @dynamic_command_get_tables NVARCHAR(MAX);
+    DECLARE @modeToken NVARCHAR(20); -- token for physical stats mode (quoted value or NULL)
+    DECLARE @ReorganizeOrRebuildCommand NVARCHAR(MAX);
+
+    -- Normalize mode token for sys.dm_db_index_physical_stats:
+    -- Use literal NULL when @indexStatisticsScanningMode is NULL/DEFAULT, else quoted text
+    SET @modeToken = CASE
+                        WHEN @indexStatisticsScanningMode IS NULL
+                             OR UPPER(@indexStatisticsScanningMode) = 'DEFAULT'
+                        THEN N'NULL'
+                        ELSE N'''' + @indexStatisticsScanningMode + N''''
+                     END;
+
+    IF @sortInTempdb NOT IN ('ON','OFF') SET @sortInTempdb = 'ON';
+
+    ------------------------------------------------------------
+    -- Optional database existence/compat check if a single DB specified
+    ------------------------------------------------------------
+    IF @databaseToCheck IS NOT NULL
+    BEGIN
+        DECLARE @checkResult INT, @checkCompat INT;
+        SELECT @checkResult = COUNT(*) FROM master.sys.databases WHERE [name] = RTRIM(@databaseToCheck);
+        IF @checkResult < 1
+            RAISERROR('Error executing index reorganization/rebuild script: Database does not exist', 20, 1) WITH LOG;
+
+        SELECT @checkCompat = [compatibility_level] FROM master.sys.databases WHERE [name] = RTRIM(@databaseToCheck);
+        IF @checkCompat < 90
+            RAISERROR('Error executing index reorganization/rebuild script: Only databases with SQL Server 2005 or later compatibility level are supported', 20, 1) WITH LOG;
+    END
+
+    IF @verboseMode = 1
+        PRINT 'Initial checks completed with no errors.';
+
+    ------------------------------------------------------------
+    -- Temp table to collect fragmentation results
+    -- (Use DATETIME for SQL 2005 compatibility)
+    ------------------------------------------------------------
+    IF OBJECT_ID('tempdb..#tmpFragmentedIndexes') IS NULL
+    BEGIN
+        CREATE TABLE #tmpFragmentedIndexes
+        (
+            [dbName] sysname,
+            [tableName] sysname,
+            [schemaName] sysname,
+            [indexName] sysname,
+            [databaseID] SMALLINT,
+            [objectID] INT,
+            [indexID] INT,
+            [indexSize] INT,
+            [AvgFragmentationPercentage] FLOAT,
+            [pageCount] INT,
+            [row_count] BIGINT,
+            [StatsUpdated] DATETIME,
+            [reorganizationOrRebuildCommand] NVARCHAR(MAX)
+        );
+    END
+    ELSE
+        DELETE FROM #tmpFragmentedIndexes;
+
+    ------------------------------------------------------------
+    -- Detect AlwaysOn (2012+); on earlier versions returns NULL -> ISNULL(..,0)
+    ------------------------------------------------------------
+    SET @isHadrEnabled = CAST(ISNULL(SERVERPROPERTY('IsHadrEnabled'), 0) AS BIT);
+
+    ------------------------------------------------------------
+    -- Build database cursor (exclude system DBs including msdb)
+    ------------------------------------------------------------
+    IF @isHadrEnabled = 1
+    BEGIN
+        IF @databaseToCheck IS NULL
+        BEGIN
+            DECLARE dbNames_cursor CURSOR FOR
+            SELECT  s.[name] AS dbName, s.database_id
+            FROM    master.sys.databases s
+            LEFT JOIN master.sys.dm_hadr_availability_replica_states r
+                   ON s.replica_id = r.replica_id
+            WHERE   s.state_desc = 'ONLINE'
+              AND   s.is_read_only <> 1
+              AND   UPPER(ISNULL(r.role_desc, 'NonHadrEnabled')) NOT LIKE 'SECONDARY'
+              AND   s.[name] NOT IN ('master','model','msdb','tempdb')
+              AND   s.[compatibility_level] >= 90
+            ORDER BY s.database_id;
+        END
+        ELSE
+        BEGIN
+            DECLARE dbNames_cursor CURSOR FOR
+            SELECT  s.[name] AS dbName, s.database_id
+            FROM    master.sys.databases s
+            LEFT JOIN master.sys.dm_hadr_availability_replica_states r
+                   ON s.replica_id = r.replica_id
+            WHERE   s.state_desc = 'ONLINE'
+              AND   s.is_read_only <> 1
+              AND   UPPER(ISNULL(r.role_desc, 'NonHadrEnabled')) NOT LIKE 'SECONDARY'
+              AND   s.[name] = RTRIM(@databaseToCheck);
+        END
+    END
+    ELSE
+    BEGIN
+        IF @databaseToCheck IS NULL
+        BEGIN
+            DECLARE dbNames_cursor CURSOR FOR
+            SELECT  s.[name] AS dbName, s.database_id
+            FROM    master.sys.databases s
+            WHERE   s.state_desc = 'ONLINE'
+              AND   s.is_read_only <> 1
+              AND   s.[name] NOT IN ('master','model','msdb','tempdb')
+              AND   s.[compatibility_level] >= 90
+            ORDER BY s.database_id;
+        END
+        ELSE
+        BEGIN
+            DECLARE dbNames_cursor CURSOR FOR
+            SELECT  s.[name] AS dbName, s.database_id
+            FROM    master.sys.databases s
+            WHERE   s.state_desc = 'ONLINE'
+              AND   s.is_read_only <> 1
+              AND   s.[name] = RTRIM(@databaseToCheck);
+        END
+    END
+
+    ------------------------------------------------------------
+    -- Loop databases and gather fragmentation data
+    ------------------------------------------------------------
+    OPEN dbNames_cursor;
+    FETCH NEXT FROM dbNames_cursor INTO @dbname, @dbid;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        IF @verboseMode = 1
+        BEGIN
+            PRINT '';
+            PRINT 'Gathering index fragmentation for database: [' + @dbname + '] (ID: ' + CAST(@dbid AS VARCHAR(10)) + ')';
+        END;
+
+        -- Build dynamic SQL safely:
+        SET @dynamic_command_get_tables = N'
+USE ' + QUOTENAME(@dbname) + N';
+INSERT INTO #tmpFragmentedIndexes (
+    [dbName],
+    [tableName],
+    [schemaName],
+    [indexName],
+    [databaseID],
+    [objectID],
+    [indexID],
+    [indexSize],
+    [AvgFragmentationPercentage],
+    [pageCount],
+    [row_count],
+    [StatsUpdated],
+    [reorganizationOrRebuildCommand]
+)
+SELECT
+    DB_NAME() AS [dbName],
+    tbl.name AS [tableName],
+    SCHEMA_NAME(tbl.schema_id) AS [schemaName],
+    idx.name AS [indexName],
+    pst.database_id AS [databaseID],
+    pst.object_id AS [objectID],
+    pst.index_id AS [indexID],
+    SUM(ps.[used_page_count]) * 8 AS [indexSize],
+    pst.avg_fragmentation_in_percent AS [AvgFragmentationPercentage],
+    pst.page_count AS [pageCount],
+    ps.row_count,
+    CAST(STATS_DATE(idx.object_id, idx.index_id) AS DATETIME) AS [StatsUpdated],
+    ' + CASE
+            WHEN @useReorganize = 1
+            THEN N'CASE
+                     WHEN pst.avg_fragmentation_in_percent > ' + CAST(@reorgUpperBound AS NVARCHAR(10)) + N' THEN
+                         ''ALTER INDEX ['' + idx.name + ''] ON ['' + DB_NAME() + ''].['' + SCHEMA_NAME(tbl.schema_id) + ''].['' + tbl.name + '']
+                            REBUILD WITH (FILLFACTOR = ' + @indexFillFactor + ', SORT_IN_TEMPDB = ' + @sortInTempdb + ');''
+                     WHEN pst.avg_fragmentation_in_percent >= ' + @fragmentationThreshold + N'
+                          AND pst.avg_fragmentation_in_percent <= ' + CAST(@reorgUpperBound AS NVARCHAR(10)) + N' THEN
+                         ''ALTER INDEX ['' + idx.name + ''] ON ['' + DB_NAME() + ''].['' + SCHEMA_NAME(tbl.schema_id) + ''].['' + tbl.name + '']
+                            REORGANIZE;''
+                     ELSE NULL
+                 END'
+            ELSE N'CASE
+                     WHEN pst.avg_fragmentation_in_percent > 30 THEN
+                         ''ALTER INDEX ['' + idx.name + ''] ON ['' + DB_NAME() + ''].['' + SCHEMA_NAME(tbl.schema_id) + ''].['' + tbl.name + '']
+                            REBUILD WITH (FILLFACTOR = ' + @indexFillFactor + ', SORT_IN_TEMPDB = ' + @sortInTempdb + ');''
+                     ELSE NULL
+                 END'
+        END + N'
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, ' + @modeToken + N') AS pst
+INNER JOIN sys.tables AS tbl
+    ON pst.object_id = tbl.object_id
+INNER JOIN sys.indexes AS idx
+    ON pst.object_id = idx.object_id AND pst.index_id = idx.index_id
+INNER JOIN sys.dm_db_partition_stats AS ps
+    ON ps.object_id = idx.object_id
+WHERE pst.index_id <> 0 and  1<>0
+  AND pst.alloc_unit_type_desc IN (N''IN_ROW_DATA'', N''ROW_OVERFLOW_DATA'')
+  AND pst.avg_fragmentation_in_percent >= ' + @fragmentationThreshold + N'
+GROUP BY
+    tbl.name, tbl.schema_id, idx.name, pst.database_id, pst.object_id, pst.index_id,
+    pst.avg_fragmentation_in_percent, pst.page_count, STATS_DATE(idx.object_id, idx.index_id), ps.row_count;
+';
+
+        IF @verboseMode = 1
+        BEGIN
+            PRINT 'Dynamic SQL to gather stats:';
+            PRINT @dynamic_command_get_tables;
+        END
+
+        EXEC (@dynamic_command_get_tables);
+
+        FETCH NEXT FROM dbNames_cursor INTO @dbname, @dbid;
+    END
+
+    CLOSE dbNames_cursor;
+    DEALLOCATE dbNames_cursor;
+
+    ------------------------------------------------------------
+    -- REPORT-ONLY BRANCH
+    ------------------------------------------------------------
+    IF @reportOnly = 1
+    BEGIN
+        IF OBJECT_ID('tempdb..FragmentedIndexesReport') IS NULL
+        BEGIN
+            CREATE TABLE tempdb.dbo.FragmentedIndexesReport
+            (
+                [dbName] sysname,
+                [tableName] sysname,
+                [schemaName] sysname,
+                [indexName] sysname,
+                [AvgFragmentationPercentage] FLOAT,
+                [indexSize] INT,
+                [StatsUpdated] DATETIME,
+                [pageCount] INT,
+                [row_count] BIGINT,
+                [reorganizationOrRebuildCommand] NVARCHAR(MAX)
+            );
+        END
+        ELSE
+            DELETE FROM tempdb.dbo.FragmentedIndexesReport;
+
+        INSERT INTO tempdb.dbo.FragmentedIndexesReport (
+            [dbName],
+            [tableName],
+            [schemaName],
+            [indexName],
+            [AvgFragmentationPercentage],
+            [indexSize],
+            [pageCount],
+            [row_count],
+            [StatsUpdated],
+            [reorganizationOrRebuildCommand]
+        )
+        SELECT
+            dbName,
+            tableName,
+            schemaName,
+            indexName,
+            AvgFragmentationPercentage,
+            indexSize,
+            pageCount,
+            [row_count],
+            [StatsUpdated],
+            reorganizationOrRebuildCommand
+        FROM #tmpFragmentedIndexes
+        ORDER BY AvgFragmentationPercentage DESC;
+
+        -- On-screen report
+        SELECT * FROM tempdb.dbo.FragmentedIndexesReport ORDER BY AvgFragmentationPercentage DESC;
+
+        -- Email report
+        IF @sendEmail = 1
+        BEGIN
+            DECLARE @rowCount INT, @html NVARCHAR(MAX) = N'';
+            SELECT @rowCount = COUNT(*) FROM tempdb.dbo.FragmentedIndexesReport;
+
+            IF @rowCount > 0
+            BEGIN
+                SET @html =
+                    N'<h3>Index Fragmentation Report</h3>' +
+                    N'<p><b>Server:</b> ' + ISNULL(@ServerName, N'') + N'<br/>' +
+                    N'<b>Threshold (%):</b> ' + CAST(@fragmentationThreshold AS NVARCHAR(10)) + N'<br/>' +
+                    N'<b>Scanning mode:</b> ' + ISNULL(@indexStatisticsScanningMode, N'DEFAULT') + N'</p>' +
+                    N'<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">' +
+                    N'<tr>' +
+                    N'  <th>Database</th>' +
+                    N'  <th>Schema</th>' +
+                    N'  <th>Table</th>' +
+                    N'  <th>Index</th>' +
+                    N'  <th>Avg Fragmentation (%)</th>' +
+                    N'  <th>Index Size (KB)</th>' +
+                    N'  <th>Page Count</th>' +
+                    N'  <th>Row Count</th>' +
+                    N'  <th>Stats Updated</th>' +
+                    N'</tr>' +
+                    (
+                        SELECT
+                            td =
+                            N'<tr>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), dbName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), schemaName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), tableName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), indexName), N'') + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), ROUND(AvgFragmentationPercentage, 2)) + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), indexSize) + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), pageCount) + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), [row_count]) + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(30), [StatsUpdated], 120), N'') + N'</td>' +
+                            N'</tr>'
+                        FROM tempdb.dbo.FragmentedIndexesReport
+                        ORDER BY AvgFragmentationPercentage DESC
+                        FOR XML PATH(''), TYPE
+                    ).value('.', 'NVARCHAR(MAX)')
+                    + N'</table>';
+            END
+            ELSE
+            BEGIN
+                SET @html =
+                    N'<h3>Index Fragmentation Report</h3>' +
+                    N'<p>No indexes met the fragmentation threshold of ' + CAST(@fragmentationThreshold AS NVARCHAR(10)) + N'%.</p>' +
+                    N'<p><b>Server:</b> ' + ISNULL(@ServerName, N'') + N'</p>';
+            END
+
+            EXEC msdb.dbo.sp_send_dbmail
+                  @profile_name    = @emailProfile
+                , @recipients      = @emailTo
+                , @copy_recipients = @emailCc
+                , @subject         = @EmailSubject
+                , @body            = @html
+                , @body_format     = 'HTML';
+        END
+    END
+    ELSE
+    ------------------------------------------------------------
+    -- EXECUTE BRANCH (run generated commands)
+    ------------------------------------------------------------
+    BEGIN
+        DECLARE reorganizeOrRebuildCommands_cursor CURSOR FOR
+            SELECT reorganizationOrRebuildCommand
+            FROM #tmpFragmentedIndexes
+            WHERE reorganizationOrRebuildCommand IS NOT NULL
+            ORDER BY AvgFragmentationPercentage DESC;
+
+        OPEN reorganizeOrRebuildCommands_cursor;
+        FETCH NEXT FROM reorganizeOrRebuildCommands_cursor INTO @ReorganizeOrRebuildCommand;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            IF @verboseMode = 1
+            BEGIN
+                PRINT '';
+                PRINT 'Executing command:';
+                PRINT @ReorganizeOrRebuildCommand;
+            END
+
+            EXEC (@ReorganizeOrRebuildCommand);
+
+            FETCH NEXT FROM reorganizeOrRebuildCommands_cursor INTO @ReorganizeOrRebuildCommand;
+        END
+
+        CLOSE reorganizeOrRebuildCommands_cursor;
+        DEALLOCATE reorganizeOrRebuildCommands_cursor;
+
+        -- Email summary of actions taken
+        IF @sendEmail = 1
+        BEGIN
+            DECLARE @rowCountExec INT, @htmlExec NVARCHAR(MAX) = N'';
+            SELECT @rowCountExec = COUNT(*)
+            FROM #tmpFragmentedIndexes
+            WHERE reorganizationOrRebuildCommand IS NOT NULL;
+
+            IF @rowCountExec > 0
+            BEGIN
+                SET @htmlExec =
+                    N'<h3>Index Maintenance Summary</h3>' +
+                    N'<p><b>Server:</b> ' + ISNULL(@ServerName, N'') + N'</p>' +
+                    N'<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">' +
+                    N'<tr>' +
+                    N'  <th>Database</th>' +
+                    N'  <th>Schema</th>' +
+                    N'  <th>Table</th>' +
+                    N'  <th>Index</th>' +
+                    N'  <th>Avg Fragmentation (%)</th>' +
+                    N'  <th>Page Count</th>' +
+                    N'  <th>Row Count</th>' +
+                    N'  <th>Action</th>' +
+                    N'</tr>' +
+                    (
+                        SELECT
+                            td =
+                            N'<tr>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), dbName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), schemaName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), tableName), N'') + N'</td>' +
+                            N'<td>' + ISNULL(CONVERT(NVARCHAR(128), indexName), N'') + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), ROUND(AvgFragmentationPercentage, 2)) + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), pageCount) + N'</td>' +
+                            N'<td style="text-align:right;">' + CONVERT(NVARCHAR(32), [row_count]) + N'</td>' +
+                            N'<td>' +
+                                CASE
+                                    WHEN reorganizationOrRebuildCommand LIKE N'% REBUILD %' OR reorganizationOrRebuildCommand LIKE N'% REBUILD;%' THEN N'REBUILD'
+                                    WHEN reorganizationOrRebuildCommand LIKE N'% REORGANIZE %' OR reorganizationOrRebuildCommand LIKE N'% REORGANIZE;%' THEN N'REORGANIZE'
+                                    ELSE N''
+                                END +
+                            N'</td>' +
+                            N'</tr>'
+                        FROM #tmpFragmentedIndexes
+                        WHERE reorganizationOrRebuildCommand IS NOT NULL and 1<>0
+                        ORDER BY AvgFragmentationPercentage DESC
+                        FOR XML PATH(''), TYPE
+                    ).value('.', 'NVARCHAR(MAX)')
+                    + N'</table>';
+            END
+            ELSE
+            BEGIN
+                SET @htmlExec =
+                    N'<h3>Index Maintenance Summary</h3>' +
+                    N'<p>No indexes required reorganization/rebuild during this run.</p>' +
+                    N'<p><b>Server:</b> ' + ISNULL(@ServerName, N'') + N'</p>';
+            END
+
+            EXEC msdb.dbo.sp_send_dbmail
+                  @profile_name    = @emailProfile
+                , @recipients      = @emailTo
+                , @copy_recipients = @emailCc
+                , @subject         = @EmailSubject
+                , @body            = @htmlExec
+                , @body_format     = 'HTML';
+        END
+
+        PRINT '';
+        PRINT 'All fragmented indexes have been reorganized/rebuilt.';
+        PRINT '';
+    END
+
+    ------------------------------------------------------------
+    -- OPTIONAL: Killed Sessions Email (IVPProdAudit.dbo.KilledSessionLog)
+    ------------------------------------------------------------
+    IF @sendEmail = 1
+    BEGIN
+        IF DB_ID('IVPProdAudit') IS NOT NULL
+           AND OBJECT_ID('IVPProdAudit.dbo.KilledSessionLog') IS NOT NULL
+        BEGIN
+            DECLARE @RunId UNIQUEIDENTIFIER;
+            DECLARE @SubjectKill NVARCHAR(MAX);
+            DECLARE @htmlKill NVARCHAR(MAX) = N'';
+
+            SELECT @RunId = MAX(RunId) FROM IVPProdAudit.dbo.KilledSessionLog;
+            SET @SubjectKill = N'Killed Sessions Report (' + CONVERT(VARCHAR(10), GETDATE(), 120) + N') -- ' + @ServerName;
+
+            IF @RunId IS NULL
+            BEGIN
+                SET @htmlKill = N'<h3>Killed Session Report</h3><p>No killed sessions found to email.</p>';
+            END
+            ELSE
+            BEGIN
+                SET @htmlKill =
+                    N'<h3>Killed Session Report</h3>' +
+                    N'<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">' +
+                    N'<tr>' +
+                    N'  <th>KillTime</th><th>SessionId</th><th>LoginName</th><th>HostName</th>' +
+                    N'  <th>ProgramName</th><th>DatabaseName</th><th>Status</th><th>CPUTimeMs</th>' +
+                    N'  <th>MemoryUsagePages</th><th>BlockedBy</th><th>LoginTime</th>' +
+                    N'</tr>' +
+                    (
+                        SELECT td =
+                            N'<tr><td>' + ISNULL(CONVERT(VARCHAR(30), KillTime, 120), '') +
+                            N'</td><td>' + CAST(SessionId AS VARCHAR(10)) +
+                            N'</td><td>' + ISNULL(LoginName, '') +
+                            N'</td><td>' + ISNULL(HostName, '') +
+                            N'</td><td>' + ISNULL(ProgramName, '') +
+                            N'</td><td>' + ISNULL(DatabaseName, '') +
+                            N'</td><td>' + ISNULL(Status, '') +
+                            N'</td><td>' + ISNULL(CAST(CPUTimeMs AS VARCHAR(20)), '') +
+                            N'</td><td>' + ISNULL(CAST(MemoryUsagePages AS VARCHAR(20)), '') +
+                            N'</td><td>' + ISNULL(CAST(BlockedBy AS VARCHAR(20)), '') +
+                            N'</td><td>' + ISNULL(CONVERT(VARCHAR(30), LoginTime, 120), '') +
+                            N'</td></tr>'
+                        FROM IVPProdAudit.dbo.KilledSessionLog
+                        WHERE RunId = @RunId
+                        FOR XML PATH(''), TYPE
+                    ).value('.', 'NVARCHAR(MAX)')
+                    + N'</table>';
+            END
+
+            EXEC msdb.dbo.sp_send_dbmail
+                  @profile_name    = @emailProfile
+                , @recipients      = @emailTo
+                , @copy_recipients = @emailCc
+                , @subject         = @SubjectKill
+                , @body            = @htmlKill
+                , @body_format     = 'HTML';
+        END
+    END
+END
+ELSE
+BEGIN
+    PRINT '';
+    PRINT 'Error: You need to be SysAdmin and use SQL Server 2005 or later in order to use this script.';
+    PRINT '';
+END

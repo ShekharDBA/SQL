@@ -1,0 +1,67 @@
+
+USE IVPProdAudit
+GO
+Delete  FROM [IVPProdAudit].[dbo].[AllDbTableSize]
+WHERE CAST(Collection_time as date)=CAST(getdate() AS date)
+GO
+USE IVPProdAudit
+GO
+DECLARE @dbName SYSNAME;
+DECLARE @sql NVARCHAR(MAX);
+
+DECLARE db_cursor CURSOR FOR
+SELECT name
+FROM sys.databases --WHERE database_id > 4
+WHERE state_desc = 'ONLINE' and
+name not in('edm_detail_mysql_11Oct','edm_mysql_exception11Oct','edm_mysql_27Sept','EDMExceptionDetail','EDMExceptionDetail_27Sept_mysql','EDMExceptionDetail_PreProd1','EDMExceptionSummary_27sept_mysql','IVPSRMArchive','IVPProdAudit')
+ORDER BY name;
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @dbName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    BEGIN TRY
+        SET @sql = N'
+         --INSERT INTO IVPProdAudit.dbo.AllDbTableSizes (DatabaseName, SchemaName, TableName, RowCounts,TotalSizeMB, UsedSizeMB, DataSizeMB, IndexSizeMB, UnusedMB,TotalSizeGB, UsedSizeGB)
+         --INSERT INTO IVPProdAudit.dbo.AllDbTableSize (DatabaseName, SchemaName, TableName, RowCounts,TotalSizeMB, UsedSizeMB, DataSizeMB, IndexSizeMB, UnusedMB,TotalSizeGB, UsedSizeGB)
+         INSERT INTO IVPProdAudit.dbo.AllDbTableSize (Collection_time, database_name, table_name, SchemaName, rows, TotalSpaceMB, UsedSpaceMB, DataSizeMB, IndexSizeMB, FreeSpaceMB, TotalSizeGB, UsedSizeGB)
+        SELECT
+	Getdate() as Collection_time,
+            db_name() AS database_name,
+	t.name AS table_name,
+            s.name AS SchemaName,
+            ISNULL(SUM(p.rows),0) AS rows,
+            CAST(ROUND(SUM(a.total_pages) * 8.0 / 1024.0, 2) AS DECIMAL(18,2)) AS TotalSpaceMB,
+            CAST(ROUND(SUM(a.used_pages) * 8.0 / 1024.0, 2) AS DECIMAL(18,2)) AS UsedSpaceMB,
+            -- Data vs Index breakdown: allocation_unit_type_desc helps distinguish
+            CAST(ROUND(SUM(CASE WHEN au.type_desc IN (''IN_ROW_DATA'',''LOB_DATA'',''ROW_OVERFLOW_DATA'') THEN au.total_pages ELSE 0 END) * 8.0 / 1024.0, 2) AS DECIMAL(18,2)) AS DataSizeMB,
+            CAST(ROUND(SUM(CASE WHEN au.type_desc = ''INDEX_PAGE'' THEN au.total_pages ELSE 0 END) * 8.0 / 1024.0, 2) AS DECIMAL(18,2)) AS IndexSizeMB,
+            CAST(ROUND((SUM(a.total_pages) - SUM(a.used_pages)) * 8.0 / 1024.0, 2) AS DECIMAL(18,2)) AS FreeSpaceMB,
+            CAST(ROUND(SUM(a.total_pages) * 8.0 / 1024.0 / 1024.0, 4) AS DECIMAL(18,4)) AS TotalSizeGB,
+            CAST(ROUND(SUM(a.used_pages) * 8.0 / 1024.0 / 1024.0, 4) AS DECIMAL(18,4)) AS UsedSizeGB
+        FROM sys.tables t
+        INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+        LEFT JOIN sys.indexes i ON t.object_id = i.object_id
+        LEFT JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+        LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
+        LEFT JOIN sys.allocation_units au ON au.allocation_unit_id = a.allocation_unit_id -- for type_desc (some versions require synonyms)		 
+        GROUP BY s.name, t.name
+        HAVING SUM(ISNULL(a.total_pages,0)) > 0 OR SUM(ISNULL(p.rows,0)) >= 0;
+        ';
+     
+        SET @sql = N'USE ' + QUOTENAME(@dbName) + N';' + @sql;
+
+        EXEC sp_executesql @sql;
+    END TRY
+    BEGIN CATCH
+   
+        PRINT CONCAT('Skipping DB:' , @dbName,  '- Error: ', ERROR_MESSAGE());
+
+    END CATCH;
+
+    FETCH NEXT FROM db_cursor INTO @dbName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;

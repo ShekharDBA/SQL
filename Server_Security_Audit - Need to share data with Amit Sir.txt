@@ -1,0 +1,294 @@
+/* =========================================================================
+   Instance-wide Security Report (Logins, Users, Roles, Permissions)
+   Compatibility-safe (no STRING_AGG), EXEC fix
+   Author: For Chandra Shekhar
+   ========================================================================= */
+
+SET NOCOUNT ON;
+
+/* ---------- Temp tables ---------- */
+IF OBJECT_ID('tempdb..#ServerLogins') IS NOT NULL DROP TABLE #ServerLogins;
+IF OBJECT_ID('tempdb..#ServerRoles')  IS NOT NULL DROP TABLE #ServerRoles;
+IF OBJECT_ID('tempdb..#ServerPerms')  IS NOT NULL DROP TABLE #ServerPerms;
+IF OBJECT_ID('tempdb..#DbUsers')      IS NOT NULL DROP TABLE #DbUsers;
+IF OBJECT_ID('tempdb..#DbRoleMembers')IS NOT NULL DROP TABLE #DbRoleMembers;
+IF OBJECT_ID('tempdb..#DbPerms')      IS NOT NULL DROP TABLE #DbPerms;
+
+CREATE TABLE #ServerLogins
+(
+    instance_name           sysname,
+    login_name              sysname,
+    type_desc               nvarchar(60),
+    is_disabled             bit,
+    default_database_name   sysname NULL,
+    create_date             datetime2,
+    modify_date             datetime2,
+    sid                     varbinary(85)
+);
+
+CREATE TABLE #ServerRoles
+(
+    instance_name   sysname,
+    login_name      sysname,
+    server_role     sysname
+);
+
+CREATE TABLE #ServerPerms
+(
+    instance_name   sysname,
+    login_name      sysname,
+    permission_name nvarchar(128),
+    state_desc      nvarchar(60)
+);
+
+CREATE TABLE #DbUsers
+(
+    instance_name               sysname,
+    database_name               sysname,
+    user_name                   sysname,
+    login_name                  sysname NULL,
+    type_desc                   nvarchar(60),
+    authentication_type_desc    nvarchar(60) NULL, -- contained users if applicable
+    sid                         varbinary(85) NULL,
+    is_orphaned                 bit
+);
+
+CREATE TABLE #DbRoleMembers
+(
+    instance_name   sysname,
+    database_name   sysname,
+    user_name       sysname,
+    db_role         sysname
+);
+
+CREATE TABLE #DbPerms
+(
+    instance_name   sysname,
+    database_name   sysname,
+    user_name       sysname,
+    class_desc      nvarchar(60),
+    permission_name nvarchar(128),
+    state_desc      nvarchar(60),
+    schema_name     sysname NULL,
+    object_name     sysname NULL,
+    column_name     sysname NULL
+);
+
+/* ---------- Server-level: logins ---------- */
+INSERT INTO #ServerLogins
+SELECT
+    @@SERVERNAME,
+    sp.name,
+    sp.type_desc,
+    sp.is_disabled,
+    sp.default_database_name,
+    sp.create_date,
+    sp.modify_date,
+    sp.sid
+FROM sys.server_principals AS sp
+WHERE sp.type IN ('S','U','G')      -- SQL login, Windows login, Windows group
+  AND sp.name NOT LIKE '##MS_%'     -- exclude system-generated cert logins
+  AND sp.principal_id > 10;         -- keep sa if you need: change as desired
+
+/* ---------- Server roles ---------- */
+INSERT INTO #ServerRoles
+SELECT
+    @@SERVERNAME,
+    m.name  AS login_name,
+    r.name  AS server_role
+FROM sys.server_role_members srm
+JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+WHERE r.type = 'R'
+  AND m.type IN ('S','U','G');
+
+/* ---------- Server explicit permissions ---------- */
+INSERT INTO #ServerPerms
+SELECT
+    @@SERVERNAME,
+    sp.name AS login_name,
+    perm.permission_name,
+    perm.state_desc
+FROM sys.server_permissions perm
+JOIN sys.server_principals sp ON perm.grantee_principal_id = sp.principal_id
+WHERE sp.type IN ('S','U','G');
+
+/* ---------- Iterate user databases ---------- */
+DECLARE @sql nvarchar(max);
+DECLARE @db  sysname;
+
+DECLARE dbs CURSOR LOCAL FAST_FORWARD FOR
+SELECT name
+FROM sys.databases
+WHERE database_id > 4         -- skip system DBs: master(1), tempdb(2), model(3), msdb(4)
+  AND state = 0;              -- online
+
+OPEN dbs;
+FETCH NEXT FROM dbs INTO @db;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @sql = N'
+    -- Users
+    INSERT INTO #DbUsers
+    SELECT
+        @@SERVERNAME,
+        DB_NAME(),
+        dp.name AS user_name,
+        sp.name AS login_name,
+        dp.type_desc,
+        dp.authentication_type_desc,  -- NULL unless contained auth is used
+        dp.sid,
+        CASE 
+            WHEN dp.sid IS NOT NULL 
+                 AND dp.sid NOT IN (SELECT sid FROM sys.server_principals WHERE sid IS NOT NULL)
+                 AND dp.type IN (''S'',''U'') 
+            THEN 1 ELSE 0 
+        END AS is_orphaned
+    FROM sys.database_principals dp
+    LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid
+    WHERE dp.type IN (''S'',''U'',''G'')    -- SQL user, Windows user, Windows group
+      AND dp.principal_id > 4              -- exclude dbo, guest, INFORMATION_SCHEMA, sys
+      AND dp.name NOT IN (''INFORMATION_SCHEMA'',''sys'');
+
+    -- DB role memberships
+    INSERT INTO #DbRoleMembers
+    SELECT
+        @@SERVERNAME,
+        DB_NAME(),
+        m.name AS user_name,
+        r.name AS db_role
+    FROM sys.database_role_members drm
+    JOIN sys.database_principals r ON r.principal_id = drm.role_principal_id
+    JOIN sys.database_principals m ON m.principal_id = drm.member_principal_id
+    WHERE r.type = ''R'';
+
+    -- Explicit DB permissions including object-level
+    ;WITH perms AS
+    (
+        SELECT
+            dp.name AS user_name,
+            perm.class_desc,
+            perm.permission_name,
+            perm.state_desc,
+            perm.class,
+            perm.major_id,
+            perm.minor_id
+        FROM sys.database_permissions perm
+        JOIN sys.database_principals dp ON perm.grantee_principal_id = dp.principal_id
+        WHERE dp.type IN (''S'',''U'',''G'')
+    ),
+    objs AS
+    (
+        SELECT
+            o.object_id,
+            s.name AS schema_name,
+            o.name AS object_name
+        FROM sys.objects o
+        JOIN sys.schemas s ON o.schema_id = s.schema_id
+    ),
+    cols AS
+    (
+        SELECT c.object_id, c.column_id, c.name AS column_name
+        FROM sys.columns c
+    )
+    INSERT INTO #DbPerms
+    SELECT
+        @@SERVERNAME,
+        DB_NAME(),
+        p.user_name,
+        p.class_desc,
+        p.permission_name,
+        p.state_desc,
+        CASE WHEN p.class IN (1,3) THEN o.schema_name ELSE NULL END AS schema_name,
+        CASE WHEN p.class = 1 THEN o.object_name
+             WHEN p.class = 3 THEN s.name END AS object_name,    -- 3 = SCHEMA
+        CASE WHEN p.class = 1 THEN c.column_name ELSE NULL END AS column_name
+    FROM perms p
+    OUTER APPLY (
+        SELECT o.schema_name, o.object_name
+        FROM objs o
+        WHERE o.object_id = p.major_id
+    ) o
+    OUTER APPLY (
+        SELECT cols.column_name
+        FROM cols
+        WHERE cols.object_id = p.major_id AND cols.column_id = p.minor_id
+    ) c
+    LEFT JOIN sys.schemas s ON (p.class = 3 AND s.schema_id = p.major_id);
+    ';
+
+    DECLARE @exec nvarchar(max) = N'USE ' + QUOTENAME(@db) + N'; ' + @sql;
+    EXEC sys.sp_executesql @exec;
+
+    FETCH NEXT FROM dbs INTO @db;
+END
+CLOSE dbs;
+DEALLOCATE dbs;
+
+/* ---------- Final unified outputs (compat-safe aggregation) ---------- */
+
+-- Helper inline function-ish aggregation pattern via CROSS APPLY
+-- A) Server-level overview with aggregated roles & server perms
+SELECT 
+    l.instance_name,
+    l.login_name,
+    l.type_desc AS login_type,
+    l.is_disabled,
+    l.default_database_name,
+    Roles.server_roles_csv,
+    Perms.server_permissions_csv
+FROM #ServerLogins l
+OUTER APPLY (
+    SELECT STUFF((
+        SELECT DISTINCT ', ' + sr2.server_role
+        FROM #ServerRoles sr2
+        WHERE sr2.instance_name = l.instance_name
+          AND sr2.login_name   = l.login_name
+        FOR XML PATH(''), TYPE).value('.','nvarchar(max)'),1,2,'') AS server_roles_csv
+) Roles
+OUTER APPLY (
+    SELECT STUFF((
+        SELECT DISTINCT ', ' + (sp2.permission_name + ' (' + sp2.state_desc + ')')
+        FROM #ServerPerms sp2
+        WHERE sp2.instance_name = l.instance_name
+          AND sp2.login_name    = l.login_name
+        FOR XML PATH(''), TYPE).value('.','nvarchar(max)'),1,2,'') AS server_permissions_csv
+) Perms
+ORDER BY l.login_name;
+
+-- B) Database memberships with aggregated DB roles
+SELECT 
+    u.instance_name,
+    u.database_name,
+    u.user_name,
+    u.login_name,
+    u.type_desc AS user_type,
+    u.authentication_type_desc,
+    u.is_orphaned,
+    Roles.db_roles_csv
+FROM #DbUsers u
+OUTER APPLY (
+    SELECT STUFF((
+        SELECT DISTINCT ', ' + rm2.db_role
+        FROM #DbRoleMembers rm2
+        WHERE rm2.instance_name = u.instance_name
+          AND rm2.database_name = u.database_name
+          AND rm2.user_name     = u.user_name
+        FOR XML PATH(''), TYPE).value('.','nvarchar(max)'),1,2,'') AS db_roles_csv
+) Roles
+ORDER BY u.database_name, u.user_name;
+
+-- C) Explicit database-level permissions (detail, one row per grant/deny)
+SELECT 
+    p.instance_name,
+    p.database_name,
+    p.user_name,
+    p.class_desc,
+    p.permission_name,
+    p.state_desc,
+    p.schema_name,
+    p.object_name,
+    p.column_name
+FROM #DbPerms p
+ORDER BY p.database_name, p.user_name, p.class_desc, p.permission_name, p.schema_name, p.object_name, p.column_name;

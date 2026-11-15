@@ -1,0 +1,146 @@
+SET NOCOUNT ON;
+
+------------------------------------------------------------
+-- DATABASE CONTEXT
+------------------------------------------------------------
+PRINT 'USE ' + QUOTENAME(DB_NAME()) + ';';
+PRINT 'GO';
+PRINT '';
+
+------------------------------------------------------------
+-- DATABASE USERS
+------------------------------------------------------------
+PRINT '-- DATABASE USERS';
+
+SELECT
+    'IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '''
+    + dp.name COLLATE DATABASE_DEFAULT
+    + ''')
+BEGIN
+    CREATE USER '
+    + QUOTENAME(dp.name) COLLATE DATABASE_DEFAULT
+    + CASE
+        WHEN dp.type IN ('S','U','G') AND dp.sid IS NOT NULL
+            THEN ' FOR LOGIN ' + QUOTENAME(dp.name) COLLATE DATABASE_DEFAULT
+        ELSE ''
+      END
+    + ';
+END;'
+FROM sys.database_principals dp
+WHERE dp.type IN ('S','U','G')
+AND dp.name NOT IN ('dbo','guest','sys','INFORMATION_SCHEMA');
+
+------------------------------------------------------------
+-- DATABASE ROLES
+------------------------------------------------------------
+PRINT '-- DATABASE ROLES';
+
+SELECT
+    'IF DATABASE_PRINCIPAL_ID('''
+    + name COLLATE DATABASE_DEFAULT
+    + ''') IS NULL
+    CREATE ROLE '
+    + QUOTENAME(name) COLLATE DATABASE_DEFAULT
+    + ';'
+FROM sys.database_principals
+WHERE type = 'R'
+AND is_fixed_role = 0;
+
+------------------------------------------------------------
+-- ROLE MEMBERSHIP
+------------------------------------------------------------
+PRINT '-- ROLE MEMBERSHIP';
+
+SELECT
+    'EXEC sp_addrolemember @rolename = '
+    + QUOTENAME(USER_NAME(rm.role_principal_id),'''') COLLATE DATABASE_DEFAULT
+    + ', @membername = '
+    + QUOTENAME(USER_NAME(rm.member_principal_id),'''') COLLATE DATABASE_DEFAULT
+    + ';'
+FROM sys.database_role_members rm
+WHERE USER_NAME(rm.member_principal_id) IS NOT NULL;
+
+------------------------------------------------------------
+-- SCHEMA LEVEL PERMISSIONS
+------------------------------------------------------------
+PRINT '-- SCHEMA LEVEL PERMISSIONS';
+
+SELECT
+    CASE WHEN p.state <> 'W'
+         THEN p.state_desc COLLATE DATABASE_DEFAULT
+         ELSE 'GRANT'
+    END
+    + ' '  COLLATE DATABASE_DEFAULT
+    + p.permission_name COLLATE DATABASE_DEFAULT
+    + ' ON SCHEMA::' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(s.name) COLLATE DATABASE_DEFAULT
+    + ' TO ' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(dp.name) COLLATE DATABASE_DEFAULT
+    + CASE
+        WHEN p.state = 'W'
+            THEN ' WITH GRANT OPTION'
+        ELSE ''
+      END
+    + ';'
+FROM sys.database_permissions p
+JOIN sys.schemas s
+    ON p.major_id = s.schema_id
+JOIN sys.database_principals dp
+    ON p.grantee_principal_id = dp.principal_id
+WHERE p.class = 3
+AND dp.principal_id > 4;
+
+------------------------------------------------------------
+-- OBJECT LEVEL PERMISSIONS
+------------------------------------------------------------
+PRINT '-- OBJECT LEVEL PERMISSIONS';
+
+SELECT
+    CASE WHEN p.state <> 'W'
+         THEN p.state_desc COLLATE DATABASE_DEFAULT
+         ELSE 'GRANT'
+    END
+    + ' ' COLLATE DATABASE_DEFAULT
+    + p.permission_name COLLATE DATABASE_DEFAULT
+    + ' ON ' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(OBJECT_SCHEMA_NAME(p.major_id)) COLLATE DATABASE_DEFAULT
+    + '.' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(OBJECT_NAME(p.major_id)) COLLATE DATABASE_DEFAULT
+    + ' TO ' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(dp.name) COLLATE DATABASE_DEFAULT
+    + CASE
+        WHEN p.state = 'W'
+            THEN ' WITH GRANT OPTION'
+        ELSE ''
+      END
+    + ';'
+FROM sys.database_permissions p
+JOIN sys.database_principals dp
+    ON p.grantee_principal_id = dp.principal_id
+WHERE p.class = 1;
+
+------------------------------------------------------------
+-- DATABASE LEVEL PERMISSIONS
+------------------------------------------------------------
+PRINT '-- DATABASE LEVEL PERMISSIONS';
+
+SELECT
+    CASE WHEN p.state <> 'W'
+         THEN p.state_desc COLLATE DATABASE_DEFAULT
+         ELSE 'GRANT'
+    END
+    + ' ' COLLATE DATABASE_DEFAULT
+    + p.permission_name COLLATE DATABASE_DEFAULT
+    + ' TO ' COLLATE DATABASE_DEFAULT
+    + QUOTENAME(dp.name) COLLATE DATABASE_DEFAULT
+    + CASE
+        WHEN p.state = 'W'
+            THEN ' WITH GRANT OPTION'
+        ELSE ''
+      END
+    + ';'
+FROM sys.database_permissions p
+JOIN sys.database_principals dp
+    ON p.grantee_principal_id = dp.principal_id
+WHERE p.major_id = 0
+AND dp.principal_id > 4;

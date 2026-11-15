@@ -1,0 +1,312 @@
+
+SELECT 
+    dp.name AS UserName,
+    dp.type_desc AS UserType,
+    dp.authentication_type_desc AS AuthType,
+    dp.create_date,
+    dp.modify_date
+FROM sys.database_role_members drm
+JOIN sys.database_principals dp 
+    ON drm.member_principal_id = dp.principal_id
+JOIN sys.database_principals rp 
+    ON drm.role_principal_id = rp.principal_id
+WHERE rp.name = 'db_datawriter'
+ORDER BY dp.name;
+
+
+SELECT 
+    DB_NAME() AS DatabaseName,
+    dp.name AS UserName,
+    dp.type_desc AS UserType,
+	rp.name
+FROM sys.database_role_members drm
+INNER JOIN sys.database_principals dp 
+    ON drm.member_principal_id = dp.principal_id
+INNER JOIN sys.database_principals rp 
+    ON drm.role_principal_id = rp.principal_id
+WHERE rp.name = 'db_datawriter'
+ORDER BY dp.name;
+
+***********************************************************************************************************************
+
+IF OBJECT_ID('tempdb..#DataWriterAccessDetails') IS NOT NULL
+    DROP TABLE #DataWriterAccessDetails;
+CREATE TABLE #DataWriterAccessDetails
+( 
+    DatabaseName SYSNAME,
+    UserName SYSNAME,
+    UserType NVARCHAR(60),
+    DataWriter SYSNAME
+);
+DECLARE @DBList TABLE (DBName SYSNAME);
+INSERT INTO @DBList (DBName)
+VALUES
+('CON'),
+('DEL'),
+('DQDB'),
+('DYNAMICS'),
+('EDM'),
+('EDMExceptionDetail'),
+('EDMExceptionSummary'),
+('EDMHangfire'),
+('GCPLP'),
+('GMBH'),
+('IRL'),
+('IVPControllerDBivpnodesprod'),
+('IVPCSC'),
+('IVPDWHConfig'),
+('IVPDWHData'),
+('IVPEDMHangfire'),
+('IVPKarma'),
+('IVPORKA'),
+('IVPPolaris'),
+('IVPPriceMaster'),
+('IVPPriceMaster_Archive'),
+('IVPPriceMasterVendor'),
+('IVPPriceMasterVendor_Archive'),
+('IVPProdAudit'),
+('IVPRAD'),
+('IVPRAD_Karma'),
+('IVPRAD_ORIGINAL'),
+('IVPRAD_PM'),
+('IVPRad_restored'),
+('IVPRe_Arch'),
+('IVPRefMaster'),
+('IVPSecMaster'),
+('IVPSecMasterVendor'),
+('IVPSnowflakeAdapter'),
+('IVPSRMArchive'),
+('IVPSRMConfiguration'),
+('IVPSRMMaster'),
+('IVPSRMVendor'),
+('IVPTriggers'),
+('IVPVendorConfig'),
+('IVPVendorMaster'),
+('IVPWATCHTOWER'),
+('keycloakDBivpnodesprod'),
+('LLCUS'),
+('LPUSD'),
+('LTDUK'),
+('mig_enterprise'),
+('mig_enterprise_exception'),
+('NapierApps'),
+('NapierCustom'),
+('NapierFinance'),
+('RADCommonTaskManager'),
+('RaptorNeo'),
+('ReportServer'),
+('ReportServerTempDB'),
+('RLM'),
+('Treasury'),
+('XpressfeedControl'),
+('XpressfeedTarget')
+--('CON'),
+--('CSC'),
+--('DEL'),
+--('dict'),
+--('DQDB'),
+--('DQDB_OLD'),
+--('DWHTesting'),
+--('DYNAMICS'),
+--('EDM'),
+--('EDM_old'),
+--('edm_trigger_test'),
+--('EDMExceptionDetail'),
+--('EDMExceptionDetail_old'),
+--('EDMExceptionSummary'),
+--('EDMExceptionSummary_old'),
+--('EDMHangfire'),
+--('GCPLP'),
+--('GMBH'),
+--('IRL'),
+--('IVPClientOnBoarding'),
+--('IVPClientOnBoarding_devbak'),
+--('IVPControllerDB'),
+--('IVPControllerDB_Original'),
+--('IVPControllerDBivpnodesdev'),
+--('IVPControllerDBivpnodesprod'),
+--('IVPControllerDBnapieruat'),
+--('IVPCorpAction'),
+--('IVPCorpAction_Archive'),
+--('IVPCorpActionVendor'),
+--('IVPCorpActionVendor_Archive'),
+--('IVPCSC'),
+--('IVPDWHConfig'),
+--('IVPDWHConfigTest'),
+--('IVPDWHData'),
+--('IVPEDMHangfire'),
+--('IVPKarma'),
+--('IVPOMS'),
+--('IVPOMSProdStaging'),
+--('IVPOMSUATDATA'),
+--('IVPORKA'),
+--('IVPPolaris'),
+--('IVPPriceMaster'),
+--('IVPPriceMaster_Archive'),
+--('IVPPriceMasterArchive'),
+--('IVPPriceMasterVendor'),
+--('IVPPriceMasterVendor_Archive'),
+--('IVPProdAudit'),
+--('ivprad'),
+--('ivprad_bkp_new_dev'),
+--('IVPRAD_Enterprise'),
+--('IVPRAD_enterprisebkp'),
+--('IVPRAD_Karma'),
+--('IVPRAD_ORIGINAL'),
+--('IVPRAD_PM'),
+--('IVPRad_restored'),
+--('IVPRe_Arch'),
+--('IVPRefMaster'),
+--('IVPRefMaster_Archive'),
+--('IVPRefMasterVendor'),
+--('IVPRefMasterVendor_Archive'),
+--('IVPSecMaster'),
+--('IVPSecMaster_Archive'),
+--('IVPSecMasterVendor'),
+--('IVPSecMasterVendor_Archive'),
+--('IVPSnowflakeAdapter'),
+--('IVPSRMArchive'),
+--('IVPSRMConfiguration'),
+--('IVPSRMMaster'),
+--('IVPSRMMaster_READ_COMMITTED_SNAPSHOT'),
+--('IVPSRMTaskManager'),
+--('IVPSRMVendor'),
+--('IVPTriggers'),
+--('IVPVendorConfig'),
+--('IVPVendorMaster'),
+--('IVPWATCHTOWER'),
+--('keycloakDB'),
+--('keycloakDBivpnodesdev'),
+--('keycloakDBivpnodesprod'),
+--('keycloakDBnapieruat'),
+--('LLCUS'),
+--('LPUSD'),
+--('LTDUK'),
+--('mig_enterprise'),
+--('mig_enterprise_exception'),
+--('NapierApps'),
+--('NapierCustom'),
+--('NapierFinance'),
+--('napieruatCSC'),
+--('napieruatDQDB'),
+--('napieruatEDMExceptionSummary'),
+--('napieruatEDMHangfire'),
+--('napieruatIVPDWH'),
+--('napieruatIVPORKA'),
+--('napieruatIVPRAD'),
+--('napieruatIVPTriggers'),
+--('napieruatRAD_bak'),
+--('napieruatTreasury'),
+--('Old_IVPProdAudit'),
+--('RAD'),
+--('RADCommonTaskManager'),
+--('RaptorNeo'),
+--('ReportServer'),
+--('ReportServerTempDB'),
+--('RLM'),
+--('SRMDailyData'),
+--('Treasury'),
+--('XpressfeedControl'),
+--('XpressfeedTarget')
+
+--('DQDB'),
+--('EDM'),
+--('EDMExceptionDetail'),
+--('EDMExceptionSummary'),
+--('EDMHangfire'),
+--('EDMHangfire_bak'),
+--('IVPControllerDBivpnodesuat'),
+--('IVPCSC'),
+--('IVPCSCe'),
+--('IVPDWHConfig'),
+--('IVPDWHData'),
+--('IVPEDM'),
+--('IVPEDMExceptionDetail'),
+--('IVPEDMExceptionSummary'),
+--('IVPEDMHangfire'),
+--('IVPKarma'),
+--('IVPOMS'),
+--('IVPOMSDATA'),
+--('IVPOMSProdStaging'),
+--('IVPORKA'),
+--('IVPPolaris'),
+--('IVPPriceMaster'),
+--('IVPPriceMaster_archive'),
+--('IVPPriceMasterVendor'),
+--('IVPPriceMasterVendor_Archive'),
+--('IVPProdAudit'),
+--('IVPRad'),
+--('ivprad_blank'),
+--('IVPRAD_Karma'),
+--('IVPRAD_PM'),
+--('IVPRe_Arch'),
+--('IVPRefMaster'),
+--('IVPSecMaster'),
+--('IVPSecMasterVendor'),
+--('IVPSnowflakeAdapter'),
+--('IVPSRMArchive'),
+--('IVPSRMConfiguration'),
+--('IVPSRMMaster'),
+--('IVPSRMVendor'),
+--('IVPTriggers'),
+--('IVPUatAudit'),
+--('IVPVendorConfig'),
+--('IVPVendorMaster'),
+--('IVPWATCHTOWER'),
+--('keycloakDBivpnodesuat'),
+--('NapierApps'),
+--('NapierCustom'),
+--('NapierFinance'),
+--('NapierRearchIVPPriceMaster'),
+--('NapierRearchIVPPriceMaster_Archive'),
+--('NapierRearchIVPPriceMasterVendor'),
+--('RADCommonTaskManager'),
+--('RaptorNeo'),
+--('ReportServer'),
+--('ReportServerTempDB'),
+--('Treasury'),
+--('XpressfeedControl'),
+--('XpressfeedTarget');
+
+DECLARE @DB SYSNAME, @SQL NVARCHAR(MAX);
+
+DECLARE DB_CURSOR CURSOR FOR
+SELECT DBName FROM @DBList;
+
+OPEN DB_CURSOR;
+FETCH NEXT FROM DB_CURSOR INTO @DB;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SQL = '
+    IF DB_ID(''' + @DB + ''') IS NOT NULL
+    BEGIN
+        INSERT INTO #DataWriterAccessDetails
+        SELECT 
+            ''' + @DB + ''' AS DatabaseName,
+            dp.name AS UserName,
+            dp.type_desc AS UserType,
+            rp.name AS DataWriter
+        FROM ' + QUOTENAME(@DB) + '.sys.database_role_members drm
+        INNER JOIN ' + QUOTENAME(@DB) + '.sys.database_principals dp 
+            ON drm.member_principal_id = dp.principal_id
+        INNER JOIN ' + QUOTENAME(@DB) + '.sys.database_principals rp 
+            ON drm.role_principal_id = rp.principal_id
+        WHERE rp.name = ''db_datawriter''
+        ORDER BY dp.name;
+    END;
+    ';
+	--print @SQL;    
+    EXEC sys.sp_executesql @SQL;
+
+    FETCH NEXT FROM DB_CURSOR INTO @DB;
+END;
+
+CLOSE DB_CURSOR;
+DEALLOCATE DB_CURSOR;
+
+SELECT 'NPGPRD-IVPSDB03' AS ServerName,* FROM #DataWriterAccessDetails ORDER BY DatabaseName, UserName;
+
+
+--select [Name] from sys.databases where database_id>4
+--select Distinct [Name] from sys.databases where database_id>4

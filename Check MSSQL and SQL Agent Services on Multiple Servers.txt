@@ -1,0 +1,15 @@
+$Servers = @(
+    "NPGPRD-IVPSDB03",
+    "NPGUAT-IVPSDB03",
+    "NPGDEV-IVPSDB03"
+)
+
+foreach ($Server in $Servers) {
+    Get-Service -ComputerName $Server `
+        -Name MSSQLSERVER,SQLSERVERAGENT `
+        -ErrorAction SilentlyContinue |
+    Select-Object @{
+        Name = 'ServerName'
+        Expression = { $Server }
+    }, Name, Status, StartType
+}

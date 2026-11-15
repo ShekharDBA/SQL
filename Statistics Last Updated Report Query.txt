@@ -1,0 +1,15 @@
+SELECT
+    s.name AS stat_name,
+    SCHEMA_NAME(o.schema_id) AS schema_name,
+    o.name AS table_name,
+    sp.last_updated,
+    sp.rows,
+    sp.rows_sampled,
+    sp.steps,
+    sp.modification_counter
+FROM sys.stats AS s
+JOIN sys.objects AS o ON o.object_id = s.object_id
+CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) AS sp
+WHERE o.type = 'U'
+ORDER BY sp.last_updated DESC, schema_name, table_name, stat_name;
+

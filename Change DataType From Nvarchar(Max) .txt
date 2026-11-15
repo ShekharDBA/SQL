@@ -1,0 +1,66 @@
+
+
+use IVPProdAudit
+GO
+
+SELECT
+    s.name  AS schema_name,
+    t.name  AS table_name,
+    c.name  AS column_name,
+    ty.name AS data_type,
+    c.max_length
+FROM sys.columns c
+JOIN sys.types ty
+    ON c.user_type_id = ty.user_type_id
+JOIN sys.tables t
+    ON c.object_id = t.object_id
+JOIN sys.schemas s
+    ON t.schema_id = s.schema_id
+WHERE ty.name = 'nvarchar'
+  AND c.max_length = -1   -- -1 = MAX
+ORDER BY s.name, t.name, c.name;
+
+**************************************************************
+
+;WITH TableList AS
+(
+    SELECT DISTINCT table_name
+    FROM (VALUES
+        ('AgentJobHistory'),
+        ('AWSCostingRawTable'),
+        ('DailyDBBackupLog'),
+        ('DatabaseSizes'),
+        ('Parameter'),
+        ('QueryInfo'),
+        ('QueryPerformance'),
+        ('RestoreLog'),
+        ('ServerMapping'),
+        ('SlowestQueries'),
+        ('Top20Query')
+    ) v(table_name)
+)
+SELECT  
+    s.name  AS schema_name,
+    t.name  AS table_name,
+    SUM(p.rows) AS row_count,
+    CAST(SUM(a.total_pages) * 8.0 / 1024 AS DECIMAL(18,2)) AS total_size_mb,
+    CAST(SUM(a.used_pages)  * 8.0 / 1024 AS DECIMAL(18,2)) AS used_size_mb,
+    CAST(
+        (SUM(a.total_pages) - SUM(a.used_pages)) * 8.0 / 1024 
+        AS DECIMAL(18,2)
+    ) AS unused_size_mb
+FROM sys.tables t
+JOIN TableList tl
+    ON t.name = tl.table_name
+JOIN sys.schemas s
+    ON t.schema_id = s.schema_id
+JOIN sys.indexes i
+    ON t.object_id = i.object_id
+JOIN sys.partitions p
+    ON i.object_id = p.object_id
+   AND i.index_id  = p.index_id
+JOIN sys.allocation_units a
+    ON p.partition_id = a.container_id
+WHERE i.index_id IN (0,1) -- heap or clustered index
+GROUP BY s.name, t.name
+ORDER BY total_size_mb DESC;

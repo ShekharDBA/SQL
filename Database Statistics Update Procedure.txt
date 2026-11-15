@@ -1,0 +1,4 @@
+
+USE YourDatabaseName;
+GO
+EXEC sp_updatestats;  -- updates stats that need it, picks sampling automatically

@@ -1,0 +1,12 @@
+sp_who2
+
+DBCC DROPCLEANBUFFERS;
+
+
+DBCC FREEPROCCACHE;
+
+
+EXEC sp_configure 'max server memory';
+
+EXEC sp_configure 'max server memory', 60000;
+RECONFIGURE;

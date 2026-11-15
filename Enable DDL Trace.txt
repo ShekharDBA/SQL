@@ -1,0 +1,89 @@
+USE master;
+GO
+
+CREATE SERVER AUDIT Audit_Server_DDL
+TO FILE (
+    FILEPATH = 'B:\SQLAudit\ServerDDL\',   -- Change path as needed
+    MAXSIZE = 512 MB,
+    MAX_ROLLOVER_FILES = 50,
+    RESERVE_DISK_SPACE = OFF
+)
+WITH (
+    QUEUE_DELAY = 1000,
+    ON_FAILURE = CONTINUE
+);
+GO
+
+ALTER SERVER AUDIT Audit_Server_DDL WITH (STATE = ON);
+GO
+
+USE master;
+GO
+
+/* 1) Create/enable the Server Audit (destination = FILE) */
+IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'Audit_Server_DDL')
+BEGIN
+      ALTER SERVER AUDIT Audit_Server_DDL
+    TO FILE (
+        FILEPATH = N'B:\SQLAudit\ServerDDL\', -- change to a valid path the SQL Server service account can write to
+        MAXSIZE = 512 MB,
+        MAX_ROLLOVER_FILES = 50
+    )
+    WITH (QUEUE_DELAY = 1000, ON_FAILURE = CONTINUE);
+END
+GO
+
+/* Make sure the audit is ON before creating specs */
+ALTER SERVER AUDIT Audit_Server_DDL WITH (STATE = ON);
+GO
+
+/* 2) (Re)create the Server Audit Specification cleanly */
+IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'Server_DDL_Spec')
+BEGIN
+    ALTER SERVER AUDIT SPECIFICATION Server_DDL_Spec WITH (STATE = OFF);
+    DROP SERVER AUDIT SPECIFICATION Server_DDL_Spec;
+END
+GO
+
+CREATE SERVER AUDIT SPECIFICATION Server_DDL_Spec
+FOR SERVER AUDIT Audit_Server_DDL
+    ADD (SERVER_OBJECT_CHANGE_GROUP),     -- (keep comments on their own line or after the list)
+    ADD (SERVER_OPERATION_GROUP),
+    ADD (SERVER_PRINCIPAL_CHANGE_GROUP),
+    ADD (AUDIT_CHANGE_GROUP)
+WITH (STATE = ON); -- turn it on in one statement
+GO
+
+USE IVPProdAudit;
+GO
+
+CREATE DATABASE AUDIT SPECIFICATION DB_DDL_Spec
+FOR SERVER AUDIT Audit_Server_DDL
+    ADD (SCHEMA_OBJECT_CHANGE_GROUP),      -- Tables, procedures, views
+    ADD (DATABASE_OBJECT_CHANGE_GROUP);    -- DB-level structures
+GO
+
+ALTER DATABASE AUDIT SPECIFICATION DB_DDL_Spec WITH (STATE = ON);
+GO
+
+
+/* Testing Purpose
+CREATE TABLE dbo.TestAuditTable (ID INT);
+ALTER TABLE dbo.TestAuditTable ADD Col2 VARCHAR(50);
+DROP TABLE dbo.TestAuditTable;
+*/
+
+
+SELECT
+    event_time,
+    action_id,
+    server_principal_name,
+    database_name,
+    schema_name,
+    object_name,
+    statement,
+    session_id,
+    host_name,
+    application_name
+FROM sys.fn_get_audit_file('B:\SQLAudit\ServerDDL\\*.sqlaudit', DEFAULT, DEFAULT)
+ORDER BY event_time DESC;

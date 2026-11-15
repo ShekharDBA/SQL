@@ -1,0 +1,20 @@
+
+
+
+
+***** Export 
+bcp "SELECT * FROM IVPPolaris.INTERNAL.ivp_polaris_risk_positon_capital_GOLDEN_data" queryout "B:\Backups\UAT_Backups\TableData.bcp" -n -T -S NPGUAT-IVPSDB03
+
+DB Name - IVPPolaris
+Table name - INTERNAL.ivp_polaris_risk_positon_capital_GOLDEN_data[10:42 PM]Please take UAT backup of this table
+
+
+
+**** Create Table in Gold_data
+SELECT TOP 0 *
+INTO INTERNAL.ivp_polaris_risk_positon_capital_GOLDEN_data
+FROM IVPPolaris.INTERNAL.ivp_polaris_risk_positon_capital_GOLDEN_data;
+
+**** Import
+
+bcp Gold_data.INTERNAL.ivp_polaris_risk_positon_capital_GOLDEN_data in "B:\Backups\UAT_Backups\TableData.bcp" -n -T -S NPGUAT-IVPSDB03

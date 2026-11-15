@@ -1,0 +1,31 @@
+USE IVPPolaris;
+GO
+
+SELECT
+    db_name(ips.database_id)       AS database_name,
+    s.name                         AS schema_name,
+    o.name                         AS table_name,
+    i.name                         AS index_name,
+    i.index_id,
+    ips.partition_number,
+    ips.index_type_desc,
+    ips.alloc_unit_type_desc,
+    ips.page_count,
+    ips.avg_fragmentation_in_percent
+	Into ##Index_Fragmentation_Report
+FROM sys.dm_db_index_physical_stats
+(
+    DB_ID(),                       -- current database
+    OBJECT_ID('Risk.Risk_Batch'),-- target table
+    NULL,                          -- all indexes on this table
+    NULL,                          -- all partitions
+    'SAMPLED'                      -- faster; use 'DETAILED' if needed
+) AS ips
+JOIN sys.indexes AS i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+JOIN sys.objects AS o ON ips.object_id = o.object_id
+JOIN sys.schemas AS s ON o.schema_id = s.schema_id
+WHERE o.type = 'U'
+--ORDER BY ips.avg_fragmentation_in_percent DESC;
+GO
+Select * From ##Index_Fragmentation_Report 
+Order By avg_fragmentation_in_percent Desc

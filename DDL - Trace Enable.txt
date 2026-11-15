@@ -1,0 +1,226 @@
+
+USE master;
+GO
+--drop table DDL_Audit_Log
+CREATE TABLE dbo.DDL_Audit_Log
+(
+    AuditID        BIGINT IDENTITY(1,1) PRIMARY KEY,
+    EventTime      DATETIME2(3),
+    EventType      NVARCHAR(200),
+    DatabaseName   SYSNAME,
+    SchemaName     SYSNAME NULL,
+    ObjectName     SYSNAME NULL,
+    ObjectType     NVARCHAR(100),
+    TSQLCommand    NVARCHAR(MAX),
+    LoginName      SYSNAME,
+    UserName       SYSNAME,
+    HostName       SYSNAME,
+    Application    SYSNAME,
+    ClientIP       NVARCHAR(48)
+);
+GO
+
+USE master;
+GO
+
+CREATE OR ALTER TRIGGER trg_Server_DDL_Audit
+ON ALL SERVER
+FOR
+    CREATE_DATABASE, ALTER_DATABASE, DROP_DATABASE,
+    CREATE_LOGIN, ALTER_LOGIN, DROP_LOGIN,
+    CREATE_SERVER_ROLE, ALTER_SERVER_ROLE, DROP_SERVER_ROLE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @EventData XML = EVENTDATA();
+
+    IF OBJECT_ID('master.dbo.DDL_Audit_Log','U') IS NOT NULL
+    BEGIN
+        INSERT INTO master.dbo.DDL_Audit_Log
+        (
+            EventTime,
+            EventType,
+            DatabaseName,
+            ObjectName,
+            ObjectType,
+            TSQLCommand,
+            LoginName,
+            UserName,
+            HostName,
+            Application,
+            ClientIP
+        )
+        SELECT
+            SYSDATETIME(),
+            @EventData.value('(/EVENT_INSTANCE/EventType)[1]', 'NVARCHAR(200)'),
+            @EventData.value('(/EVENT_INSTANCE/DatabaseName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectType)[1]', 'NVARCHAR(100)'),
+            @EventData.value('(/EVENT_INSTANCE/TSQLCommand/CommandText)[1]', 'NVARCHAR(MAX)'),
+            ORIGINAL_LOGIN(),
+            NULL,
+            HOST_NAME(),
+            APP_NAME(),
+            CONVERT(NVARCHAR(48), CONNECTIONPROPERTY('client_net_address'));
+    END
+END;
+GO
+
+
+
+USE master;
+GO
+
+CREATE OR ALTER TRIGGER trg_Database_DDL_Audit
+ON DATABASE
+FOR
+    CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
+    CREATE_VIEW, ALTER_VIEW, DROP_VIEW,
+    CREATE_PROCEDURE, ALTER_PROCEDURE, DROP_PROCEDURE,
+    CREATE_FUNCTION, ALTER_FUNCTION, DROP_FUNCTION,
+    CREATE_TRIGGER, ALTER_TRIGGER, DROP_TRIGGER,
+    CREATE_SCHEMA, ALTER_SCHEMA, DROP_SCHEMA,
+    CREATE_USER, ALTER_USER, DROP_USER,
+    CREATE_INDEX, ALTER_INDEX, DROP_INDEX,
+    CREATE_SYNONYM, DROP_SYNONYM,
+    CREATE_SEQUENCE, ALTER_SEQUENCE, DROP_SEQUENCE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @EventData XML = EVENTDATA();
+
+    IF OBJECT_ID('master.dbo.DDL_Audit_Log','U') IS NOT NULL
+    BEGIN
+        INSERT INTO master.dbo.DDL_Audit_Log
+        (
+            EventTime,
+            EventType,
+            DatabaseName,
+            SchemaName,
+            ObjectName,
+            ObjectType,
+            TSQLCommand,
+            LoginName,
+            UserName,
+            HostName,
+            Application,
+            ClientIP
+        )
+        SELECT
+            SYSDATETIME(),
+            @EventData.value('(/EVENT_INSTANCE/EventType)[1]', 'NVARCHAR(200)'),
+            DB_NAME(),
+            @EventData.value('(/EVENT_INSTANCE/SchemaName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectType)[1]', 'NVARCHAR(100)'),
+            @EventData.value('(/EVENT_INSTANCE/TSQLCommand/CommandText)[1]', 'NVARCHAR(MAX)'),
+            ORIGINAL_LOGIN(),
+            USER_NAME(),
+            HOST_NAME(),
+            APP_NAME(),
+            CONVERT(NVARCHAR(48), CONNECTIONPROPERTY('client_net_address'));
+    END
+END;
+GO
+
+
+
+USE master;
+GO
+create Database Test_1
+use [IVPProdAudit]
+GO
+CREATE TABLE dbo.TestAudit (ID INT);
+ALTER TABLE dbo.TestAudit ADD Name VARCHAR(50);
+DROP TABLE dbo.TestAudit;
+
+SELECT * 
+FROM master.dbo.DDL_Audit_Log
+ORDER BY AuditID DESC;
+
+
+--ENABLE TRIGGER trg_Server_DDL_Audit ON ALL SERVER;
+--GO
+--ENABLE TRIGGER trg_Database_DDL_Audit ON DATABASE;
+--GO
+
+
+
+
+**************************************************** I enabled in One User DB With Below Query *****************************
+
+use [IVPPriceMasterVendor_Archive]
+GO
+
+CREATE OR ALTER TRIGGER trg_Database_DDL_Audit
+ON DATABASE
+FOR
+    CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
+    CREATE_VIEW, ALTER_VIEW, DROP_VIEW,
+    CREATE_PROCEDURE, ALTER_PROCEDURE, DROP_PROCEDURE,
+    CREATE_FUNCTION, ALTER_FUNCTION, DROP_FUNCTION,
+    CREATE_TRIGGER, ALTER_TRIGGER, DROP_TRIGGER,
+    CREATE_SCHEMA, ALTER_SCHEMA, DROP_SCHEMA,
+    CREATE_USER, ALTER_USER, DROP_USER,
+    CREATE_INDEX, ALTER_INDEX, DROP_INDEX,
+    CREATE_SYNONYM, DROP_SYNONYM,
+    CREATE_SEQUENCE, ALTER_SEQUENCE, DROP_SEQUENCE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @EventData XML = EVENTDATA();
+
+    IF OBJECT_ID('master.dbo.DDL_Audit_Log','U') IS NOT NULL
+    BEGIN
+        INSERT INTO master.dbo.DDL_Audit_Log
+        (
+            EventTime,
+            EventType,
+            DatabaseName,
+            SchemaName,
+            ObjectName,
+            ObjectType,
+            TSQLCommand,
+            LoginName,
+            UserName,
+            HostName,
+            Application,
+            ClientIP
+        )
+        SELECT
+            SYSDATETIME(),
+            @EventData.value('(/EVENT_INSTANCE/EventType)[1]', 'NVARCHAR(200)'),
+            DB_NAME(),
+            @EventData.value('(/EVENT_INSTANCE/SchemaName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectName)[1]', 'SYSNAME'),
+            @EventData.value('(/EVENT_INSTANCE/ObjectType)[1]', 'NVARCHAR(100)'),
+            @EventData.value('(/EVENT_INSTANCE/TSQLCommand/CommandText)[1]', 'NVARCHAR(MAX)'),
+            ORIGINAL_LOGIN(),
+            USER_NAME(),
+            HOST_NAME(),
+            APP_NAME(),
+            CONVERT(NVARCHAR(48), CONNECTIONPROPERTY('client_net_address'));
+    END
+END;
+GO
+
+
+--SELECT name, is_disabled
+--FROM sys.triggers
+--WHERE parent_class_desc = 'DATABASE';
+
+--USE [IVPPriceMater];
+GO
+CREATE TABLE TestAudit2 (ID INT);
+ALTER TABLE TestAudit2 ADD Name VARCHAR(50);
+DROP TABLE TestAudit2;
+
+
+SELECT TOP 20 *
+FROM master.dbo.DDL_Audit_Log
+ORDER BY AuditID DESC;
+
+

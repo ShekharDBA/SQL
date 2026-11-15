@@ -1,0 +1,9 @@
+DECLARE @sql NVARCHAR(MAX) = N'';
+
+SELECT @sql = @sql + 'KILL ' + CAST(session_id AS NVARCHAR(10)) + ';'
+FROM sys.dm_exec_sessions
+WHERE login_name = SUSER_SNAME()
+  AND session_id <> @@SPID;   -- don't kill yourself
+
+PRINT @sql;   -- review before executing
+--EXEC(@sql);  -- uncomment to actually kill

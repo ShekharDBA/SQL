@@ -1,0 +1,84 @@
+SET NOCOUNT ON;
+
+IF OBJECT_ID('tempdb..#FinalExecutePermissions') IS NOT NULL 
+    DROP TABLE #FinalExecutePermissions;
+
+CREATE TABLE #FinalExecutePermissions
+(
+      DatabaseName sysname
+    , PrincipalName sysname
+    , SchemaName sysname NULL
+    , PermissionState varchar(60)
+    , PermissionScope varchar(20)   -- Database / Schema
+);
+
+DECLARE @DB sysname;
+DECLARE @sql nvarchar(max);
+
+DECLARE db_cursor CURSOR LOCAL FAST_FORWARD FOR
+SELECT name 
+FROM sys.databases
+WHERE database_id > 4   -- Exclude system DBs
+  AND state = 0;        -- ONLINE only
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DB;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @sql = N'
+    INSERT INTO #FinalExecutePermissions
+    (
+          DatabaseName
+        , PrincipalName
+        , SchemaName
+        , PermissionState
+        , PermissionScope
+    )
+    SELECT
+          ''' + @DB + ''' AS DatabaseName
+        , pr.name AS PrincipalName
+        , NULL AS SchemaName
+        , dp.state_desc AS PermissionState
+        , ''DATABASE'' AS PermissionScope
+    FROM ' + QUOTENAME(@DB) + '.sys.database_permissions dp
+    JOIN ' + QUOTENAME(@DB) + '.sys.database_principals pr 
+      ON dp.grantee_principal_id = pr.principal_id
+    WHERE dp.permission_name = ''EXECUTE''
+      AND dp.class = 0;   -- DATABASE LEVEL
+    
+
+    INSERT INTO #FinalExecutePermissions
+    (
+          DatabaseName
+        , PrincipalName
+        , SchemaName
+        , PermissionState
+        , PermissionScope
+    )
+    SELECT
+          ''' + @DB + ''' AS DatabaseName
+        , pr.name AS PrincipalName
+        , s.name AS SchemaName
+        , dp.state_desc AS PermissionState
+        , ''SCHEMA'' AS PermissionScope
+    FROM ' + QUOTENAME(@DB) + '.sys.database_permissions dp
+    JOIN ' + QUOTENAME(@DB) + '.sys.database_principals pr 
+      ON dp.grantee_principal_id = pr.principal_id
+    JOIN ' + QUOTENAME(@DB) + '.sys.schemas s 
+      ON dp.class = 3 
+     AND dp.major_id = s.schema_id
+    WHERE dp.permission_name = ''EXECUTE'';';
+
+    EXEC (@sql);
+
+    FETCH NEXT FROM db_cursor INTO @DB;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+-- FINAL RESULT
+SELECT *
+FROM #FinalExecutePermissions
+ORDER BY DatabaseName, PermissionScope, PrincipalName;

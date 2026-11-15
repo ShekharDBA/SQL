@@ -1,0 +1,223 @@
+
+
+
+
+EXEC msdb.dbo.sysmail_delete_account_sp
+    @account_name = N'DBA-Dev';
+
+GO
+EXEC msdb.dbo.sysmail_add_account_sp
+    @account_name    = N'DBA-Dev',
+    @email_address   = N'aws-npg-sql-prod-ses-user@napierparkglobal.com',
+    @display_name    = N'SQL Server',
+    @mailserver_name = N'email-smtp.us-east-1.amazonaws.com',
+    @port            = 587,
+    @enable_ssl      = 1,
+    @username        = N'AKIAVRUVUNTHEQ7TTVN3',
+    @password        = N'BEjJLsP/iZTTO91cexHl/tjiPvry1aS9gEkY4CfrRrs1';
+
+GO
+
+
+
+EXEC msdb.dbo.sysmail_add_profileaccount_sp
+    @profile_name    = N'DBA-Dev',
+    @account_name    = N'DBA-Dev',
+    @sequence_number = 1;
+GO
+
+
+SELECT name  FROM msdb.dbo.sysmail_profile;
+SELECT name FROM msdb.dbo.sysmail_account;
+
+EXEC msdb.dbo.sysmail_stop_sp;
+EXEC msdb.dbo.sysmail_start_sp;
+
+GO
+
+
+EXEC msdb.dbo.sp_send_dbmail
+    @profile_name = N'DBA-Dev',
+    @recipients   = N'chandra.shekhar@company.com',
+    @subject      = N'Test AWS SES Email',
+    @body         = N'Database Mail TLS authentication test';
+GO
+
+SELECT *  FROM msdb.dbo.sysmail_event_log
+ORDER BY log_date DESC;
+Select Getdate()
+GO
+	
+
+	USE msdb;
+SELECT 
+    p.name        AS profile_name,
+    p.description,
+    a.name        AS account_name,
+    a.email_address,
+    a.display_name,
+    s.servername  AS smtp_server,
+    s.port,
+    s.enable_ssl,
+    s.username    AS smtp_username
+FROM dbo.sysmail_profile p
+JOIN dbo.sysmail_profileaccount pa ON p.profile_id = pa.profile_id
+JOIN dbo.sysmail_account a ON pa.account_id = a.account_id
+JOIN dbo.sysmail_server s ON a.account_id = s.account_id;
+
+select * from sysmail_profile;
+select * from sysmail_profileaccount;
+select * from sysmail_account;
+select * from sysmail_server;
+
+************************ 121 Dev *********************
+
+
+
+
+/* ============================================================
+   Database Mail: Clean Setup (Account + Profile + Activation)
+   Author: Chandra’s helper
+   Instructions:
+     1) Edit SECTION A variables to your environment.
+     2) Execute entire script as sysadmin in master (or anywhere).
+   ============================================================ */
+
+---------------------------------------------------------------
+-- SECTION A: EDIT THESE VALUES
+---------------------------------------------------------------
+DECLARE
+    @ACCOUNT_NAME     sysname = N'DBA-Dev-SES',
+    @PROFILE_NAME     sysname = N'DBA-Dev',
+    @FROM_EMAIL       nvarchar(256) = N'aws-npg-sql-prod-ses-user@napierparkglobal.com', -- MUST be SES-verified or relay-approved
+    @DISPLAY_NAME     nvarchar(256) = N'SQL Server',
+    @REPLY_TO         nvarchar(256) = N'aws-npg-sql-prod-ses-user@napierparkglobal.com',
+
+    -- SMTP settings
+    @MAILSERVER_NAME  nvarchar(256) = N'email-smtp.us-east-1.amazonaws.com', -- e.g., SES us-east-1, or your relay FQDN
+    @PORT             int           = 587,  -- 25/587/465 (SES: 587 is recommended)
+    @ENABLE_SSL       bit           = 1,    -- SES: 1 (STARTTLS). Anonymous relay on 25: 0
+
+    -- Credentials: set to NULL if anonymous relay
+    @SMTP_USERNAME    nvarchar(256) = N'AKIAVRUVUNTHEQ7TTVN3',
+    @SMTP_PASSWORD    nvarchar(256) = N'BEjJLsP/iZTTO91cexHl/tjiPvry1aS9gEkY4CfrRrs1',
+
+    -- Test message
+    @TEST_RECIPIENT   nvarchar(4000) = N'chandra.shekhar@napierparkglobal.com', -- For SES sandbox, recipient must be verified
+    @SEND_TEST        bit = 1; -- Set 0 to skip test email
+---------------------------------------------------------------
+
+PRINT '=== Step 1: Enable Database Mail XPs ===';
+EXEC sp_configure 'show advanced options', 1; RECONFIGURE WITH OVERRIDE;
+EXEC sp_configure 'Database Mail XPs', 1;     RECONFIGURE WITH OVERRIDE;
+
+PRINT '=== Step 2: Ensure msdb Service Broker / security context is healthy ===';
+/* We won’t force NEW_BROKER here to avoid disrupting msdb writers.
+   If your queue gets stuck INACTIVE, run NEW_BROKER in a short window. */
+ALTER AUTHORIZATION ON DATABASE::msdb TO sa;
+ALTER DATABASE msdb SET TRUSTWORTHY ON; -- Common and safe for msdb
+
+USE msdb;
+-- Ensure ExternalMailQueue activation points to dbo.sp_sysmail_activate
+IF OBJECT_ID('msdb.dbo.ExternalMailQueue', 'SQ') IS NOT NULL
+BEGIN
+    ALTER QUEUE dbo.ExternalMailQueue WITH STATUS = ON;
+    ALTER QUEUE dbo.ExternalMailQueue
+    WITH ACTIVATION (
+        STATUS = ON,
+        PROCEDURE_NAME = dbo.sp_sysmail_activate,
+        MAX_QUEUE_READERS = 1,
+        EXECUTE AS OWNER
+    );
+END
+ELSE
+BEGIN
+    PRINT 'INFO: ExternalMailQueue not found (rare). DBMail will recreate if needed.';
+END
+
+PRINT '=== Step 3: Stop DBMail (if running) ===';
+EXEC msdb.dbo.sysmail_stop_sp;
+
+PRINT '=== Step 4: Remove any existing profile/account with same names (idempotent cleanup) ===';
+BEGIN TRY
+    IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_profile WHERE name = @PROFILE_NAME)
+    BEGIN
+        DELETE pp FROM msdb.dbo.sysmail_principalprofile pp
+        INNER JOIN msdb.dbo.sysmail_profile p ON p.profile_id = pp.profile_id
+        WHERE p.name = @PROFILE_NAME;
+
+        DELETE pa FROM msdb.dbo.sysmail_profileaccount pa
+        INNER JOIN msdb.dbo.sysmail_profile p ON p.profile_id = pa.profile_id
+        WHERE p.name = @PROFILE_NAME;
+
+        EXEC msdb.dbo.sysmail_delete_profile_sp @profile_name = @PROFILE_NAME;
+    END
+
+    IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_account WHERE name = @ACCOUNT_NAME)
+    BEGIN
+        EXEC msdb.dbo.sysmail_delete_account_sp @account_name = @ACCOUNT_NAME;
+    END
+END TRY
+BEGIN CATCH
+    PRINT CONCAT('Cleanup warning: ', ERROR_MESSAGE());
+END CATCH;
+
+PRINT '=== Step 5: Create Account ===';
+EXEC msdb.dbo.sysmail_add_account_sp
+     @account_name    = @ACCOUNT_NAME,
+     @email_address   = @FROM_EMAIL,
+     @display_name    = @DISPLAY_NAME,
+     @replyto_address = @REPLY_TO,
+     @mailserver_name = @MAILSERVER_NAME,
+     @port            = @PORT,
+     @enable_ssl      = @ENABLE_SSL,
+     @username        = @SMTP_USERNAME,   -- NULL for anonymous
+     @password        = @SMTP_PASSWORD;   -- NULL for anonymous
+
+PRINT '=== Step 6: Create Profile ===';
+EXEC msdb.dbo.sysmail_add_profile_sp
+     @profile_name = @PROFILE_NAME,
+     @description  = N'Primary Database Mail profile';
+
+PRINT '=== Step 7: Link Account to Profile ===';
+EXEC msdb.dbo.sysmail_add_profileaccount_sp
+     @profile_name    = @PROFILE_NAME,
+     @account_name    = @ACCOUNT_NAME,
+     @sequence_number = 1;
+
+PRINT '=== Step 8: Grant Public access and set as Default ===';
+EXEC msdb.dbo.sysmail_add_principalprofile_sp
+     @profile_name = @PROFILE_NAME,
+     @principal_id = 0,  -- public
+     @is_default   = 1;
+
+PRINT '=== Step 9: Start DBMail ===';
+EXEC msdb.dbo.sysmail_start_sp;
+
+PRINT '=== Step 10: Health Check (Queue) ===';
+EXEC msdb.dbo.sysmail_help_queue_sp @queue_type = 'Mail';
+
+PRINT '=== Step 11: Optional Test Email ===';
+IF @SEND_TEST = 1
+BEGIN
+    EXEC msdb.dbo.sp_send_dbmail
+         @profile_name = @PROFILE_NAME,    -- optional if default
+         @recipients   = @TEST_RECIPIENT,
+         @subject      = N'Database Mail test - fresh setup',
+         @body         = N'Hello! This is a test from SQL Database Mail fresh setup.';
+END
+
+PRINT '=== Step 12: Recent Mail Items (Top 10) ===';
+SELECT TOP (10)
+       mailitem_id, sent_status, last_mod_date, subject, recipients
+FROM msdb.dbo.sysmail_allitems
+ORDER BY mailitem_id DESC;
+
+PRINT '=== Step 13: Recent Event Log (Top 20) ===';
+SELECT TOP (20)
+       log_date, event_type, description
+FROM msdb.dbo.sysmail_event_log
+ORDER BY log_date DESC;
+GO
+
+**********************************

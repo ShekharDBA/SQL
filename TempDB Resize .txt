@@ -1,0 +1,41 @@
+
+
+https://napiercap-my.sharepoint.com/:x:/r/personal/amit_khanna_napierparkglobal_com/_layouts/15/Doc.aspx?sourcedoc=%7B9B8853F9-C7EB-4778-A018-0AA68397B211%7D&file=All%20User%20Accounts%204-2026%20(002).xlsx&fromShare=true&action=default&mobileredirect=true
+
+
+Need to discuss with Amit Sir
+
+
+Font name for better looks..
+Segoe UI
+
+****************** Satish Prod ****************** 
+
+Few DB related Changes...
+
+Need to perform at DBA end
+
+
+
+******************
+
+TempDB is configured with a minimum size of 185 GB.  
+That means SQL Server is not allowed to shrink it below that size.
+******************
+
+Reduce the configured size of the TempDB file
+Pick a reasonable size (example: 20 GB):
+--ALTER DATABASE tempdb MODIFY FILE (NAME = tempdev, SIZE = 20480MB);
+--ALTER DATABASE tempdb MODIFY FILE (NAME = temp2, SIZE = 20480MB);
+--ALTER DATABASE tempdb MODIFY FILE (NAME = temp3, SIZE = 20480MB);
+--ALTER DATABASE tempdb MODIFY FILE (NAME = temp4, SIZE = 20480MB);
+
+
+
+***************** Need to do this later ..
+
+
+ALTER DATABASE tempdb MODIFY FILE (NAME = tempdev, SIZE = 102400MB);
+ALTER DATABASE tempdb MODIFY FILE (NAME = temp2, SIZE = 102400MB);
+ALTER DATABASE tempdb MODIFY FILE (NAME = temp3, SIZE = 102400MB);
+ALTER DATABASE tempdb MODIFY FILE (NAME = temp4, SIZE = 102400MB);

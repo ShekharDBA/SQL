@@ -1,0 +1,6 @@
+SELECT
+    OBJECT_NAME(s.object_id) AS TableName,
+    s.name AS StatisticsName,
+    STATS_DATE(s.object_id, s.stats_id) AS LastUpdated
+FROM sys.stats s
+ORDER BY LastUpdated DESC; 

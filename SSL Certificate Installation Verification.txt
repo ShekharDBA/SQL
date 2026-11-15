@@ -1,0 +1,3 @@
+EXEC sp_readerrorlog 0,1 , 'cert'
+GO 
+Select DISTINCT encrypt_option from sys.dm_exec_connections where session_id=@@SPID

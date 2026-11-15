@@ -1,0 +1,28 @@
+
+
+USE IVPPolaris;
+
+SELECT
+    p.name AS UserName,
+    r.name AS RoleName
+FROM sys.database_role_members rm
+JOIN sys.database_principals r
+    ON rm.role_principal_id = r.principal_id
+JOIN sys.database_principals p
+    ON rm.member_principal_id = p.principal_id
+Order by 1 ASC
+
+
+*************************** 
+
+USE IVPPolaris;
+
+EXECUTE AS USER = 'NAPIER\JOresik_npg';
+
+SELECT *
+FROM fn_my_permissions(NULL, 'DATABASE');
+
+REVERT;
+
+
+

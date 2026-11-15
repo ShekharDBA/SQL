@@ -1,0 +1,86 @@
+
+SELECT  name,value_in_use
+FROM sys.configurations
+WHERE name = 'max degree of parallelism';
+
+Query Result *****
+name	                   value_in_use
+max degree of parallelism	    4
+
+EXEC sp_configure 'max degree of parallelism';
+
+Result 
+name	                  minimum	  maximum	config_value	run_value
+max degree of parallelism	0	       32767	   4	         4
+
+
+
+SELECT cpu_count
+FROM sys.dm_os_sys_info;
+
+Result 
+cpu_count
+16
+*************************************************   max degree of parallelism
+USE IVPPolaris;
+GO
+ALTER DATABASE SCOPED CONFIGURATION
+SET MAXDOP = 8;
+GO
+
+******  Result 
+configuration_id	name	value	value_for_secondary	is_value_default
+1	                MAXDOP	8	           NULL              	0
+
+**************************************************************************************************
+EXEC sp_helpfile;
+
+************************** 
+USE master;
+GO
+
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'IVPPolaris', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'IVPPolaris_log', FILEGROWTH = 512MB);
+
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312001', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312002', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312003', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312004', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312005', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312006', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312007', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312008', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312009', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312010', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312011', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312012', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312013', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312014', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312015', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312016', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312017', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312018', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312019', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312020', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312021', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312022', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312023', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312024', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312025', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312026', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312027', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312028', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312029', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312030', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312031', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312032', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312033', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312034', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312035', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312036', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312037', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312038', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312039', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312040', FILEGROWTH = 512MB);
+ALTER DATABASE [IVPPolaris] MODIFY FILE (NAME = N'PolarisPartition12312041', FILEGROWTH = 512MB);
+GO

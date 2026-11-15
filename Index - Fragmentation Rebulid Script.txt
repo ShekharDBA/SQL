@@ -1,0 +1,253 @@
+/* ==========================================================
+   Rebuild/Reorganize indexes (or heap) for a custom object list
+   - Accepts: [DB].[Schema].[Object]   (bracketed 3-part)
+              [Schema].[Object]        (bracketed 2-part, uses current DB)
+              DB.Schema.Object         (unbracketed 3-part)
+              Schema.Object            (unbracketed 2-part, uses current DB)
+              Aliases (e.g. "...] norm") are ignored
+   - Skips plain (non-indexed) views
+   - ONLINE = ON when supported (Enterprise/MI; best effort)
+   - Thresholds: REORGANIZE 10–30%, REBUILD >30%
+   ========================================================== */
+
+SET NOCOUNT ON;
+
+DECLARE @OnlineSupported bit = CASE WHEN CAST(SERVERPROPERTY('EngineEdition') AS int) IN (3, 8) THEN 1 ELSE 0 END;
+
+-- 1) Load your raw list (aliases OK)
+DECLARE @RawInputs TABLE (raw nvarchar(4000) PRIMARY KEY);
+INSERT INTO @RawInputs (raw)
+VALUES
+(N'[IVPPolaris].[INTERNAL].[pnl.vw_ivp_polaris_intra_day_pnl_denormalized_for_risk]'),
+(N'[IVPPolaris].[INTERNAL].[ivp_polaris_impl_private_lending_position_snapshot]'),
+(N'[IVPRefMaster].[dbo].[lvw_Portfolio_Group_Related_Portfolio]'),
+(N'dimension.ivp_polaris_portfolio_non_time_series'),
+(N'[INTERNAL].[ivp_polaris_FEAC_norm_data] norm'),
+(N'[IVPSecMaster].[dbo].[vwCustomSecurityDenorm]'),
+(N'IVPSRMMaster.impl.Custom_SecurityDenorm');
+
+-- 2) Normalize and parse into db/schema/object
+--    NOTE: Make all PK columns NOT NULL to avoid Msg 8111
+DECLARE @Targets TABLE (
+    db_name   sysname     NOT NULL,
+    schema_nm sysname     NOT NULL,
+    object_nm sysname     NOT NULL,
+    PRIMARY KEY (db_name, schema_nm, object_nm)
+);
+
+DECLARE @raw nvarchar(4000), @token nvarchar(4000);
+DECLARE cur0 CURSOR LOCAL FAST_FORWARD FOR SELECT raw FROM @RawInputs;
+OPEN cur0;
+FETCH NEXT FROM cur0 INTO @raw;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    -- Strip alias (anything after first space)
+    DECLARE @sp int = CHARINDEX(N' ', @raw + N' ');
+    SET @token = LTRIM(RTRIM(LEFT(@raw, @sp - 1)));
+
+    -- Trim trailing comma / semicolon
+    WHILE LEN(@token) > 0 AND RIGHT(@token,1) IN (N',', N';')
+        SET @token = LEFT(@token, LEN(@token)-1);
+
+    DECLARE @p_db sysname = NULL, @p_schema sysname = NULL, @p_obj sysname = NULL;
+
+    IF LEFT(@token,1) = N'['
+    BEGIN
+        -- Parse bracketed segments safely: [seg1].[seg2].[seg3?]
+        DECLARE @seg1 nvarchar(4000)=NULL, @seg2 nvarchar(4000)=NULL, @seg3 nvarchar(4000)=NULL;
+        DECLARE @pos int = 1, @l int, @r int, @idx int = 1;
+
+        WHILE 1=1
+        BEGIN
+            SET @l = CHARINDEX(N'[', @token, @pos);
+            IF @l = 0 BREAK;
+            SET @r = CHARINDEX(N']', @token, @l + 1);
+            IF @r = 0 BREAK;
+
+            DECLARE @seg nvarchar(4000) = SUBSTRING(@token, @l + 1, @r - @l - 1);
+            IF @idx = 1 SET @seg1 = @seg;
+            IF @idx = 2 SET @seg2 = @seg;
+            IF @idx = 3 SET @seg3 = @seg;
+
+            SET @idx += 1;
+            SET @pos = @r + 1;
+            IF @idx > 3 BREAK;
+        END
+
+        IF @seg3 IS NOT NULL
+        BEGIN
+            SET @p_db = @seg1; SET @p_schema = @seg2; SET @p_obj = @seg3;
+        END
+        ELSE IF @seg2 IS NOT NULL
+        BEGIN
+            SET @p_db = DB_NAME(); SET @p_schema = @seg1; SET @p_obj = @seg2;
+        END
+        ELSE
+        BEGIN
+            -- single-part; treat as object in default schema
+            SET @p_db = DB_NAME(); SET @p_schema = SCHEMA_NAME(); SET @p_obj = @seg1;
+        END
+    END
+    ELSE
+    BEGIN
+        -- Unbracketed: PARSENAME(token, 1)=object, (2)=schema, (3)=db
+        SET @p_obj    = PARSENAME(@token, 1);
+        SET @p_schema = PARSENAME(@token, 2);
+        SET @p_db     = PARSENAME(@token, 3);
+
+        IF @p_schema IS NULL OR @p_obj IS NULL
+        BEGIN
+            PRINT 'Skip (cannot parse): ' + ISNULL(@token, N'(null)');
+            GOTO next_row;
+        END
+
+        IF @p_db IS NULL SET @p_db = DB_NAME();
+    END
+
+    -- Ensure NOT NULL values before insert (important for the PK)
+    IF @p_db IS NULL SET @p_db = DB_NAME();
+
+    INSERT INTO @Targets (db_name, schema_nm, object_nm)
+    SELECT @p_db, @p_schema, @p_obj
+    WHERE @p_schema IS NOT NULL AND @p_obj IS NOT NULL;
+
+next_row:
+    FETCH NEXT FROM cur0 INTO @raw;
+END
+CLOSE cur0; DEALLOCATE cur0;
+
+PRINT '--- Parsed Targets ---';
+SELECT db_name AS [Database], schema_nm AS [Schema], object_nm AS [Object]
+FROM @Targets
+ORDER BY [Database], [Schema], [Object];
+
+-- 3) Process targets: collect fragmentation and act
+DECLARE 
+    @t_db sysname,
+    @t_schema sysname,
+    @t_obj sysname,
+    @dynsql nvarchar(max);
+
+DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
+SELECT db_name, schema_nm, object_nm FROM @Targets ORDER BY db_name, schema_nm, object_nm;
+
+OPEN cur;
+FETCH NEXT FROM cur INTO @t_db, @t_schema, @t_obj;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    PRINT REPLICATE('-', 100);
+    PRINT CONCAT('Processing: ', QUOTENAME(@t_db), '.', QUOTENAME(@t_schema), '.', QUOTENAME(@t_obj));
+
+    DROP TABLE IF EXISTS #ix_tmp;
+    CREATE TABLE #ix_tmp(
+        object_id int,
+        index_id int,
+        index_name sysname NULL,
+        avg_fragmentation_in_percent float,
+        type_desc nvarchar(60)
+    );
+
+    -- Collect fragmentation INSIDE the target DB
+    SET @dynsql = N'
+        USE ' + QUOTENAME(@t_db) + N';
+        WITH ix AS (
+            SELECT
+                i.object_id,
+                i.index_id,
+                i.name AS index_name,
+                ps.avg_fragmentation_in_percent,
+                i.type_desc
+            FROM sys.dm_db_index_physical_stats(
+                     DB_ID(), OBJECT_ID(N''' + QUOTENAME(@t_schema) + N'.' + QUOTENAME(@t_obj) + N'''),
+                     NULL, NULL, ''LIMITED'') ps
+            JOIN sys.indexes i
+              ON i.object_id = ps.object_id AND i.index_id = ps.index_id
+        )
+        INSERT INTO #ix_tmp(object_id, index_id, index_name, avg_fragmentation_in_percent, type_desc)
+        SELECT object_id, index_id, index_name, avg_fragmentation_in_percent, type_desc
+        FROM ix;';
+    BEGIN TRY
+        EXEC sp_executesql @dynsql;
+    END TRY
+    BEGIN CATCH
+        PRINT '  Skip (cannot read fragmentation; plain view or missing object?): ' + ERROR_MESSAGE();
+    END CATCH;
+
+    IF EXISTS (SELECT 1 FROM #ix_tmp)
+    BEGIN
+        -- Indexes present (table or indexed view)
+        DECLARE @ix_id int, @ix_name sysname, @frag float, @ix_type nvarchar(60), @action nvarchar(20);
+
+        DECLARE cix CURSOR LOCAL FAST_FORWARD FOR
+        SELECT index_id, index_name, avg_fragmentation_in_percent, type_desc
+        FROM #ix_tmp
+        WHERE index_id > 0; -- skip heaps here
+        OPEN cix;
+        FETCH NEXT FROM cix INTO @ix_id, @ix_name, @frag, @ix_type;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @action = CASE 
+                WHEN @frag >= 30 THEN N'REBUILD'
+                WHEN @frag >= 10 THEN N'REORGANIZE'
+                ELSE N'SKIP'
+            END;
+
+            PRINT CONCAT('  Index: ', QUOTENAME(@ix_name), ' | Frag: ', CAST(@frag AS varchar(32)), '% | Action: ', @action);
+
+            IF @action <> N'SKIP'
+            BEGIN
+                SET @dynsql = N'USE ' + QUOTENAME(@t_db) + N'; ALTER INDEX ' + QUOTENAME(@ix_name) + N' ON '
+                             + QUOTENAME(@t_schema) + N'.' + QUOTENAME(@t_obj) + N' '
+                             + @action + N' WITH (';
+
+                IF @action = N'REBUILD'
+                    SET @dynsql += CASE WHEN @OnlineSupported = 1 THEN N'ONLINE = ON' ELSE N'ONLINE = OFF' END;
+                ELSE
+                    SET @dynsql += N'LOB_COMPACTION = ON';
+
+                SET @dynsql += N');';
+
+                BEGIN TRY
+                    EXEC sp_executesql @dynsql;
+                    PRINT '    Done.';
+                END TRY
+                BEGIN CATCH
+                    PRINT '    Failed: ' + ERROR_MESSAGE();
+                END CATCH;
+            END
+
+            FETCH NEXT FROM cix INTO @ix_id, @ix_name, @frag, @ix_type;
+        END
+        CLOSE cix; DEALLOCATE cix;
+
+        -- If HEAP exists (index_id = 0), defragment heap
+        IF EXISTS (SELECT 1 FROM #ix_tmp WHERE index_id = 0)
+        BEGIN
+            PRINT '  Object is a HEAP. Running ALTER TABLE ... REBUILD to defragment heap...';
+            SET @dynsql = N'USE ' + QUOTENAME(@t_db) + N'; ALTER TABLE ' + QUOTENAME(@t_schema) + N'.' + QUOTENAME(@t_obj) + N' REBUILD;';
+            BEGIN TRY
+                EXEC sp_executesql @dynsql;
+                PRINT '    Heap rebuild done.';
+            END TRY
+            BEGIN CATCH
+                PRINT '    Heap rebuild failed: ' + ERROR_MESSAGE();
+            END CATCH
+        END
+    END
+    ELSE
+    BEGIN
+        PRINT '  No indexes found (plain view or object not found). Skipping.';
+    END
+
+    DROP TABLE IF EXISTS #ix_tmp;
+
+    FETCH NEXT FROM cur INTO @t_db, @t_schema, @t_obj;
+END
+
+CLOSE cur; DEALLOCATE cur;
+
+PRINT REPLICATE('=', 100);
+PRINT 'Completed.';

@@ -1,0 +1,24 @@
+************** Database Activity Audit Query **************
+
+SELECT
+    TE.name AS EventName,
+    T.DatabaseName,
+    T.NTUserName,
+    T.LoginName,
+    T.StartTime,
+    T.TextData
+FROM sys.fn_trace_gettable
+(
+    (SELECT path FROM sys.traces WHERE is_default = 1),
+    DEFAULT
+) T
+JOIN sys.trace_events TE
+    ON T.EventClass = TE.trace_event_id
+--WHERE T.LoginName = 'svc_xpressfeed_prod'
+-- where T.TextData like '%grant%'
+
+ORDER BY T.StartTime DESC;
+
+
+
+

@@ -1,0 +1,42 @@
+SELECT 
+    r.session_id,
+    r.command,
+    r.percent_complete,
+    r.start_time,
+    DATEADD(SECOND, r.estimated_completion_time/1000, GETDATE()) AS EstimatedCompletionTime,
+    r.estimated_completion_time/1000 AS SecondsRemaining,
+    (r.percent_complete) AS PercentComplete,
+    r.total_elapsed_time/1000 AS ElapsedSeconds,
+    r.estimated_completion_time/1000/60 AS MinutesRemaining
+FROM sys.dm_exec_requests r
+WHERE  r.command IN ('BACKUP DATABASE','RESTORE DATABASE');;
+
+
+
+**************************************
+
+
+SELECT
+    r.session_id,
+    r.command,
+    r.percent_complete,
+    r.start_time,
+    r.estimated_completion_time / 1000 AS Est_Seconds_Remaining
+FROM sys.dm_exec_requests r
+WHERE r.command IN ('BACKUP DATABASE','RESTORE DATABASE');
+
+/**   Log Backup */
+
+SELECT
+    r.session_id,
+    r.command,
+    r.status,
+    r.percent_complete,
+    r.start_time,
+    DATEADD(SECOND,
+            r.estimated_completion_time / 1000,
+            GETDATE()) AS EstimatedCompletionTime,
+    r.total_elapsed_time / 1000 / 60 AS ElapsedMinutes,
+    r.estimated_completion_time / 1000 / 60 AS RemainingMinutes
+FROM sys.dm_exec_requests r
+WHERE r.command IN ('BACKUP DATABASE', 'BACKUP LOG');

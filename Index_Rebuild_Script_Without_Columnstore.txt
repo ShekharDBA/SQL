@@ -1,0 +1,16 @@
+DECLARE @sql nvarchar(max);
+
+SELECT @sql = STRING_AGG(CAST(
+    'PRINT ''Rebuilding ' + QUOTENAME(s.name) + '.' + QUOTENAME(o.name) + ' → ' + QUOTENAME(i.name) + ''';' + CHAR(10) +
+    'ALTER INDEX ' + QUOTENAME(i.name) + ' ON ' + QUOTENAME(s.name) + '.' + QUOTENAME(o.name) +
+    ' REBUILD WITH (SORT_IN_TEMPDB = ON);'
+AS NVARCHAR(MAX)), CHAR(10))
+FROM sys.objects AS o
+JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+JOIN sys.indexes AS i ON i.object_id = o.object_id
+WHERE o.type = 'U'
+  AND i.index_id > 0
+  AND i.type IN (1, 2);
+
+-- PRINT @sql; -- optional review
+EXEC sys.sp_executesql @sql;

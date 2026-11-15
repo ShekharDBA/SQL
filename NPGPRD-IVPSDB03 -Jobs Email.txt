@@ -1,0 +1,18 @@
+[DBA_Collect_Unused_Table]    FROM SQL
+[DBA_Email_TOP_20_Queries]    From Powershell
+DBA_kill_sleeping_sessions    From SQL
+DBA_Send All Invalid Objects  From SQL
+DBA_Send_Blocking_Email       From Powershell
+DBA_Send_Long_Running_Queries From Powershell
+DBA_Send_OpenConnections      From SQL
+SendTimeoutError Email        From Powershell
+SendBlockerEmail              From SQL
+DBA_TOP_CPU_IO_LongRunningQueries_Report  -- Need to check powershell script about Email
+DBA_Weekend_OnDemand_Refresh  From SQL
+OTL - Get Job History Details From SQL
+OTL - Get Top Queries by Resource From SQL
+OTL - Monitor Index Rebuild Job  From Powershell
+OTL - Monitor SQL Log Backup Job From Powershell
+OTL - AWS Log Backup Copy Report  From Powershell
+
+

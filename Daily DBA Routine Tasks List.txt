@@ -1,0 +1,22 @@
+
+
+********************** Check Full Backup ********************************
+
+SELECT 
+    bs.database_name,
+    bs.backup_start_date,
+    bs.backup_finish_date,
+    bmf.physical_device_name
+FROM msdb.dbo.backupset bs
+INNER JOIN msdb.dbo.backupmediafamily bmf 
+    ON bs.media_set_id = bmf.media_set_id
+WHERE 
+    bs.type = 'D'   -- Full backup
+    AND CONVERT(date, bs.backup_start_date) = CONVERT(date, DATEADD(day, -1, GETDATE()))
+ -- AND database_name in('EDM', 'IVPPricemaster')
+ORDER BY 
+    bs.backup_start_date DESC;
+
+
+****************************************************************************
+

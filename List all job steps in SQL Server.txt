@@ -1,0 +1,20 @@
+USE msdb;
+GO
+
+SELECT  
+    j.name            AS JobName,
+    js.step_id        AS StepID,
+    js.step_name      AS StepName,
+    js.subsystem      AS SubSystem,
+    js.database_name  AS DatabaseName,
+    js.command        AS Command,
+    js.on_success_action,
+    js.on_fail_action,
+    js.retry_attempts,
+    js.retry_interval,
+    js.last_run_outcome,
+    js.last_run_duration
+FROM dbo.sysjobs j
+JOIN dbo.sysjobsteps js
+    ON j.job_id = js.job_id
+ORDER BY j.name, js.step_id;

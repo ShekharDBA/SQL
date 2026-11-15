@@ -1,0 +1,9 @@
+
+The simplest and safest approach is:
+
+1) Full backup.
+2) Stop database access / maintenance window.
+3) Change file locations in SQL Server.
+4) Take database offline.
+5) Move MDF, NDF, and LDF files from E: to F:.
+6) Bring database online.

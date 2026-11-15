@@ -1,0 +1,32 @@
+
+
+
+DECLARE @StartDate date = '2025-12-01';
+
+WITH daily AS
+(
+    SELECT
+        CAST(DateReported AS date) AS ReportDate,
+        SUM(SizeMB) AS TotalMB
+    FROM dbo.DatabaseSizes
+    GROUP BY CAST(DateReported AS date)
+),
+d AS
+(
+    SELECT
+        ReportDate,
+        TotalMB,
+        LAG(TotalMB) OVER (ORDER BY ReportDate) AS PreviousDayTotalMB
+    FROM daily
+)
+SELECT
+    ReportDate,
+    TotalMB,
+    PreviousDayTotalMB,
+    (TotalMB - PreviousDayTotalMB) AS DifferenceInTotalMB,
+    CASE WHEN PreviousDayTotalMB > 0
+         THEN (TotalMB - PreviousDayTotalMB) * 100.0 / PreviousDayTotalMB
+         ELSE NULL END AS PercentageInTotalMB
+FROM d
+WHERE ReportDate >= @StartDate
+ORDER BY ReportDate desc;
