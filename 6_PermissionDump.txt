@@ -1,0 +1,2 @@
+Refer the below path to run the users permissions scripts after refresh
+H:\WeekendRefresh\PostScripts
