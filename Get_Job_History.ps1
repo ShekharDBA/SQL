@@ -30,7 +30,7 @@ $body = "<h2>Job History Overview:</h2>"
 $body += $JobDetails
 
 #Send-MailMessage -To $To -Subject "Job History Details on $MyInstance from $today" –From "supportdba@options-it.com" -SmtpServer $MailServer -Body $body -BodyAsHtml
-$User = "AKIA2PHX6VSJIJ2EZ6ES"
-$PWord = ConvertTo-SecureString -String "BPLXU6gbV/iU+AJNfzRFWaSwI9lf7LFfnQbPZNCC9XB7" -AsPlainText -Force
+$User = "AKIAVRUVUNTHAMQGXJUS"
+$PWord = ConvertTo-SecureString -String "BMhK2Nhq/9/vfiNiru1426fyxUdgLH5bSkr0V8NPDyWz" -AsPlainText -Force
 $Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $User, $PWord
 Send-MailMessage -To $To -Subject "Job History Details on $MyInstance from $today" –From $From -SmtpServer $SMTPServer -Port 587 -Credential $Credential -UseSsl -Body $body -BodyAsHtml
