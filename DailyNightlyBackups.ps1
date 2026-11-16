@@ -32,7 +32,8 @@ END
 Invoke-Sqlcmd -ServerInstance $serverName -Database $logDB -Query $createTableCmd
 
 # --- Get databases to backup ---
-$dbList = Invoke-Sqlcmd -ServerInstance $serverName -Database $logDB -Query "Select [name] from sys.databases Where state_desc='ONLINE' and name not in('tempdb')"
+$dbList = Invoke-Sqlcmd -ServerInstance $serverName -Database $logDB -Query "Select [name] from sys.databases Where state_desc='ONLINE' and name in ('IVPSRMConfiguration','IVPSRMMaster','IVPSRMArchive','IVPSRMVendor','IVPVendorConfig','IVPVendorMaster','IVPRefMaster','IVPSecMaster'
+,'IVPSecMasterVendor','IVPORKA','EDM','DQDB','EDMExceptionDetail','EDMExceptionSummary','IVPPolaris','IVPDWHConfig','RaptorNeo','IVPTriggers"
 
 foreach ($row in $dbList) {
     $dbName = $row.name

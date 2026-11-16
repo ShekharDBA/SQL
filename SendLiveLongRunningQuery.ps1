@@ -5,11 +5,11 @@ $today = get-date -Format "dd MMM yyyy"
 #$To = "deepak.jha@napierparkglobal.com"
 #$To = "napiertechsupportoda@napierparkglobal.com"
 
-$To = "napiertechsupportoda@napierparkglobal.com", "Chandra.Chandraker@napierparkglobal.com","anand.singit@napierparkglobal.com", "Rahul.Rastogi@napierparkglobal.com","Dave.Sunny@napierparkglobal.com"
+$To ="napiertechsupportoda@napierparkglobal.com", "Chandra.Chandraker@napierparkglobal.com","anand.singit@napierparkglobal.com", "Rahul.Rastogi@napierparkglobal.com","Dave.Sunny@napierparkglobal.com"
 
-$Cc = "chandra.shekhar@napierparkglobal.com"
+$Cc = "chandra.shekhar@napierparkglobal.com, Amit.Khanna@napierparkglobal.com"
 $From = "aws-npg-sql-prod-ses-user@napierparkglobal.com"
-$Subject = "Long Running Queries >15 Mins on NPGPIVPD02USE1A"
+$Subject = "Long Running Queries >15 Mins on NPGUAT-IVPSDB03"
 $SMTPServer = "email-smtp.us-east-1.amazonaws.com"
 #$SMTPServer = "extrlus.options-it.com"
 
@@ -54,7 +54,7 @@ table th {
 "@
 #>
 $query =  "Exec dbo.sp_LongRunningQuery"
-$Report = Invoke-Sqlcmd -ServerInstance "NPGPRD-IVPREARCDB" -Database "IVPProdAudit" -Query $query | convertTo-Html -Head $style -Property 'Duration (dd hh:mm:ss.mss)',S_ID,SQL_Text,Login_Name,Status,HostName,DatabaseName,ProgramName,StartTime,CollectionTime
+$Report = Invoke-Sqlcmd -ServerInstance "NPGUAT-IVPSDB03" -Database "IVPProdAudit" -Query $query | convertTo-Html -Head $style -Property 'Duration (dd hh:mm:ss.mss)',S_ID,SQL_Text,Login_Name,Status,HostName,DatabaseName,ProgramName,StartTime,CollectionTime
 
 
 $body = "<h2>Long Running Queries>15 mins:</h2>"
