@@ -1,4 +1,4 @@
-﻿$SqlInstance = "NPGUAT-IVPSDB03"
+﻿$SqlInstance = "NPGUAT-IVPREARC"
 $DatabaseName="master"
 $DT=(Get-Date).ToString("yyyyMMdd")
 $OutPutFile="H:\WeekendRefresh\PostScripts\PermissionDump__${DT}.sql"

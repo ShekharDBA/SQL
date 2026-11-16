@@ -1,0 +1,2 @@
+Check Sqlagent Job -> DBA_NightlyBackups
+BackupPath=H:\MSSQL\Nightly_Backups
