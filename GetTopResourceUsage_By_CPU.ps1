@@ -1,0 +1,8 @@
+﻿$MyInstances = 'npguivpd02use1a','npgdivpd02use1a','npgpivpd02use1a'
+$today = get-date -Format "dd MMM yyyy hh:mm"
+$beginDate = (get-date $today).AddDays(-1).ToString(“yyyy-MM-dd HH:mm”)
+$finishDate = (Get-Date $today).toString(“yyyy-MM-dd HH:mm”)
+
+$MyInstances.ForEach{
+Get-DbaTopResourceUsage -SqlInstance $MyInstances -Type CPU
+}

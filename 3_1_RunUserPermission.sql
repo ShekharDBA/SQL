@@ -1,0 +1,1 @@
+Exec [dbo].[sp_getPermissionBackup]
